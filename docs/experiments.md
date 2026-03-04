@@ -141,9 +141,9 @@ Phase 1 can produce a result in an afternoon. Phase 2 in a weekend. Phase 3 is a
 
 ---
 
-## Anti-Forgetting Strategy Experiments
+## Training Strategy Experiments
 
-The following experiments (1-5) test different LoRA training strategies. Each is run within the Phase 2 or Phase 3 framework above — same repos, same splits, same metrics. The only variable is the training strategy.
+Once we've established that the skill layer works (Experiments 1 and 9), which training approach is most practical for continual updates? The following experiments (2-5) test different strategies for keeping the adapter current without losing previously learned skills. Each is run within the Phase 2 or Phase 3 framework above — same repos, same splits, same metrics. The only variable is the training strategy.
 
 ---
 
