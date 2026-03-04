@@ -1,6 +1,6 @@
 # Research Landscape
 
-A survey of the current state of research across the areas that RECALL draws on and contributes to.
+A survey of the current state of research across the areas that Looper draws on and contributes to.
 
 ---
 
@@ -44,7 +44,7 @@ where B is d x r and A is r x k, with rank r << min(d, k) (typically r = 8 to 64
 3. However, LoRA also forgets less — the low-rank constraint acts as implicit regularization
 4. This creates a fundamental tradeoff: LoRA adapters are good at shifting behavioral patterns but poor at memorizing specific facts
 
-**Implication for RECALL:** This is why we frame the project around "accumulated competence" (procedural knowledge) rather than "memory" (episodic facts). The strength of LoRA aligns with encoding tool usage patterns, debugging strategies, and workflow conventions — exactly the kind of environmental fluency we're targeting.
+**Implication for Looper:** This is exactly why LoRA is the right technology for a skill layer. LoRA is naturally good at encoding the things that constitute environmental skill — tool usage patterns, debugging strategies, workflow conventions — and naturally bad at the things that should stay in the knowledge layer (specific facts, episodic details). The technology's strengths align with the abstraction.
 
 ---
 
@@ -84,41 +84,37 @@ The LoRA setting introduces unique dynamics because the trainable parameter spac
 
 **Kalajdzievski (2024)** showed that forgetting follows a power law: as you train on more data for a new task, forgetting of the old task increases as a power function. Critical finding: this relationship cannot be circumvented by early stopping or learning rate adjustment. The power law appears to be fundamental to gradient-based optimization in finite-capacity networks.
 
-**Implication for RECALL:** This suggests there may be an inherent information-theoretic ceiling on how much a fixed-rank adapter can retain across sessions. Our experiments should characterize where this ceiling is, not just try to push past it.
+**Implication for Looper:** This suggests there may be an inherent ceiling on how many skills a fixed-rank adapter can retain across sessions. Our experiments should characterize where this ceiling is, not just try to push past it.
 
 ---
 
-## 3. Context Engineering and Competing Approaches
+## 3. The Existing Knowledge Layer
+
+The skill layer that Looper proposes sits on top of — not instead of — the existing knowledge infrastructure. Understanding what already exists is important because Looper needs to add value beyond what these systems already provide.
 
 ### RAG (Retrieval-Augmented Generation)
 
-The dominant paradigm for giving LLMs access to external knowledge. Store documents as embeddings, retrieve the most relevant chunks at query time, inject them into context.
-
-**Strengths:** Instantly updatable (add/remove documents), precise factual recall, no training required, works with any model.
-
-**Weaknesses:** Competes for context budget, retrieval quality is fragile (different queries surface different chunks), no behavioral learning (the model doesn't get "better" at the domain, it just gets more information), requires re-processing the same background knowledge on every call.
+The dominant paradigm for giving LLMs access to external knowledge. Store documents as embeddings, retrieve the most relevant chunks at query time, inject them into context. This is a **knowledge** tool — it gives the agent information it can reference. It doesn't teach the agent how to use that information efficiently.
 
 ### Long Context Windows
 
-Context windows have expanded from 4K to 10M+ tokens in three years. Google's Gemini 1.5 supports 10M tokens; Claude supports 200K; many open models support 128K+. This makes context-based approaches increasingly viable for even very large knowledge bases.
+Context windows have expanded from 4K to 10M+ tokens in three years. Google's Gemini 1.5 supports 10M tokens; Claude supports 200K; many open models support 128K+. **Many-Shot ICL** (Agarwal et al., 2024) showed that stuffing hundreds of examples into the prompt achieves performance that previously required fine-tuning. Long context is powerful for knowledge. But even with unlimited context, the agent doesn't develop skills — it's given more to reference, not made more fluent.
 
-**Many-Shot ICL** (Agarwal et al., 2024) showed that stuffing hundreds of examples into the prompt achieves performance that previously required fine-tuning. This is an important result for RECALL because it raises the bar: our LoRA approach must beat not just RAG but also many-shot in-context learning.
+### Agent Memory Systems (All Knowledge-Layer)
 
-### Agent Memory Systems (Context-Based)
+**Reflexion** (Shinn et al., 2023) — Agents reflect on failures and store verbal self-critiques in a memory buffer injected into future prompts. Context-based. This is our primary comparison baseline.
 
-**Reflexion** (Shinn et al., 2023) — Agents reflect on failures and store verbal self-critiques in a memory buffer that's injected into future prompts. Purely context-based, no weight updates. This is our primary comparison baseline.
+**MemGPT** (Packer et al., 2023) — OS-inspired virtual memory for LLM context. Extends effective context indefinitely but all knowledge remains as text.
 
-**MemGPT** (Packer et al., 2023) — Inspired by OS virtual memory. Manages a hierarchy of context (main context ↔ external storage) with explicit read/write operations. Extends effective context indefinitely but all knowledge remains in text form.
+**ExpeL** (Zhao et al., 2023) — Extracts trajectory insights as natural language rules, retrieved into future prompts. Similar to Looper's synthesis step but keeps everything in the knowledge layer.
 
-**ExpeL** (Zhao et al., 2023) — Agents extract insights from trajectories and store them as natural language rules. Rules are retrieved and injected into future prompts. Similar to our synthesis step but keeps everything in context.
+**Voyager** (Wang et al., 2023) — Minecraft agent that writes reusable code functions stored in a skill library. The closest analog to what Looper does, but implemented as code retrieval rather than weight updates. Voyager builds a library of skills as text; Looper trains skills into the model.
 
-**Voyager** (Wang et al., 2023) — Minecraft agent that writes reusable code functions and stores them in a skill library. Retrieved and composed for future tasks. A form of procedural memory, but implemented as code retrieval rather than weight updates.
+**OpenClaw's built-in memory** — File-based markdown memory with hybrid vector + BM25 search. MEMORY.md for curated long-term knowledge, daily logs for recent context. This is the knowledge layer that Looper's skill layer sits on top of.
 
-**OpenClaw's built-in memory** — File-based markdown memory with hybrid vector + BM25 search. MEMORY.md for curated long-term memory, daily logs for recent context. Pre-compaction memory flush promotes durable information before context compression. This is the system our LoRA approach must complement or outperform.
+### The Gap
 
-### Key Observation
-
-All existing agent memory systems are context-based. They store and retrieve text. None of them modify the model's weights based on experience. This means the model itself never actually changes — it's always the same Day 1 employee, just with better notes. RECALL is testing whether we can move the agent from Day 1 to Day 30.
+All of these systems operate on the knowledge axis. They give the agent more information to reference. None of them change the model itself. The agent with perfect knowledge retrieval is still the same Day 1 employee — just one with better notes. Looper tests whether adding a skill layer on top of the knowledge layer produces a measurably more capable agent.
 
 ---
 
@@ -126,9 +122,9 @@ All existing agent memory systems are context-based. They store and retrieve tex
 
 Converting experience into training data is an active research area.
 
-**SWE-Gym** (Pan et al., 2025) — Trains coding agents on their own trajectories. Demonstrates that agents can improve from self-generated experience. Closest existing work to our synthesis pipeline, but focuses on general capability improvement rather than per-instance environmental fluency.
+**SWE-Gym** (Pan et al., 2025) — Trains coding agents on their own trajectories. Demonstrates that agents can improve from self-generated experience. Closest existing work to Looper's synthesis pipeline, but focuses on general capability improvement rather than per-instance environmental skill.
 
-**AutoRefine** (arXiv 2601.22758) — Converts agent trajectories into reusable expertise for continual refinement. The most directly relevant existing work to RECALL's synthesis component. Key gap: doesn't address catastrophic forgetting or per-instance adaptation.
+**AutoRefine** (arXiv 2601.22758) — Converts agent trajectories into reusable expertise for continual refinement. The most directly relevant existing work to Looper's synthesis component. Key gap: doesn't address catastrophic forgetting or per-instance adaptation.
 
 **Context Distillation** — The general technique of converting in-context knowledge into weight updates. Used extensively in RLHF pipelines where human feedback is distilled into reward models and then into policy weights.
 
@@ -136,15 +132,15 @@ Converting experience into training data is an active research area.
 
 ### Data Quality as the Bottleneck
 
-A critical insight from the research conversation: the hardest part of the RECALL pipeline is not the LoRA training (well-understood) or the serving (solved by S-LoRA/vLLM). It's the synthetic data generation step.
+A critical insight: the hardest part of the Looper pipeline is not the LoRA training (well-understood) or the serving (solved by S-LoRA/vLLM). It's the synthetic data generation step.
 
 Agent trajectories are noisy. They contain false starts, tool errors, backtracking, and verbose observations. The synthesizer must:
 - Correctly attribute failures to the right causes (was approach A wrong, or did it fail due to a transient error?)
 - Identify which strategies are genuinely good vs. which happened to work by luck
 - Distinguish the agent's correct reasoning from its confabulations
-- Extract generalizable environmental knowledge from specific instances
+- Extract generalizable environmental skills from specific instances
 
-Bad synthesis → bad training data → bad adapter → agent encodes bad habits that are hard to detect and fix (unlike a bad RAG document, which is easy to find and delete).
+Bad synthesis → bad training data → bad adapter → the agent learns bad habits that are hard to detect and fix (unlike a bad document in the knowledge layer, which is easy to find and delete).
 
 ---
 
@@ -162,7 +158,7 @@ The "every instance has different weights" problem has been solved at the infras
 
 **Storage math:** A rank-16 LoRA adapter for a 7B model is ~30-50MB. 10,000 adapters = 500GB, costing about $10/month on cloud object storage. This is negligible.
 
-**Implication for RECALL:** The serving infrastructure is not a research problem. We use vLLM for self-hosted experiments and can deploy to Fireworks or similar for production. The per-adapter overhead is small enough that per-project or even per-user adapters are economically viable.
+**Implication for Looper:** The serving infrastructure is not a research problem. We use vLLM for self-hosted experiments and can deploy to Fireworks or similar for production. The per-adapter overhead is small enough that per-project or even per-user skill adapters are economically viable.
 
 ---
 
@@ -172,13 +168,13 @@ Some recent work explores architectural alternatives to LoRA for encoding memory
 
 **Titans: Learning to Memorize at Test Time** (Google, 2025) — Introduces a neural long-term memory module that learns to memorize at test time. The module is a small neural network that gets updated during inference (not training) to store relevant context. Novel approach that blurs the line between context and weights.
 
-**Memory Layers at Scale** (Meta, 2024) — Replaces some transformer layers with explicit key-value memory layers containing up to 128B parameters. The memory layers act like a learned database within the model. Shows promise for factual recall without full model updates.
+**Memory Layers at Scale** (Meta, 2024) — Replaces some transformer layers with explicit key-value memory layers containing up to 128B parameters. The memory layers act like a learned database within the model. Shows promise for factual retrieval without full model updates.
 
 **MemoryLLM** (ICML 2024) — Self-updatable memory pools that the model can read from and write to during inference. Another architectural approach to persistent memory.
 
 **Doc-to-LoRA** (Sakana AI, 2026) — A hypernetwork that converts a document directly into LoRA adapter weights in sub-second time, without any gradient-based training. Demonstrated on Gemma-2-2B, achieving 83.5% of in-context performance. If this scales to larger models and higher accuracy, it could make per-session consolidation instantaneous. Currently limited by: small model (2B), accuracy gap (17% below in-context), and no evidence of scaling to 7B+.
 
-**Implication for RECALL:** These architectural approaches are fascinating but require training from scratch or modifying the base model. RECALL deliberately targets existing pre-trained models with standard LoRA — no architecture changes, no custom pre-training. If architectural approaches like Titans mature, RECALL's findings about what types of knowledge benefit from weight updates vs. context will still apply.
+**Implication for Looper:** These architectural approaches are fascinating but require training from scratch or modifying the base model. Looper deliberately targets existing pre-trained models with standard LoRA — no architecture changes, no custom pre-training. It's a layer you add on top, not a new model you build from scratch.
 
 ---
 
@@ -194,6 +190,7 @@ Some recent work explores architectural alternatives to LoRA for encoding memory
 | Doc-to-LoRA (Sakana AI) | 2026 | Hypernetwork converts documents to LoRA weights in sub-second time |
 | SWE-Gym (Pan et al.) | 2025 | Training coding agents on their own trajectories |
 | Reflexion (Shinn et al.) | 2023 | Context-based agent self-reflection memory (our primary baseline) |
+| SWE-Bench-CL (Joshi et al.) | 2025 | Continual learning benchmark for coding agents — 273 tasks, 8 repos, chronological ordering |
 
 ### Anti-Forgetting Strategies
 

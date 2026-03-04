@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "recall"
+name = "looper"
 version = "0.1.0"
-description = "Research on Experience-Consolidated Adaptive LoRA Learning"
+description = "A skill layer for AI agents — turning old context into learned environmental fluency through LoRA consolidation"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
@@ -36,7 +36,7 @@ serve = [
     "vllm>=0.4",
 ]
 all = [
-    "recall[dev,train,eval,serve]",
+    "looper[dev,train,eval,serve]",
 ]
 
 [tool.pytest.ini_options]

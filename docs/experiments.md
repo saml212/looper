@@ -4,10 +4,153 @@ All experiments are pre-registered here with hypotheses, methodology, and succes
 
 ---
 
+## Evaluation Framework: SWE-Bench-CL
+
+All experiments use **SWE-Bench-CL** (Joshi et al., 2025) as the primary benchmark. SWE-Bench-CL was built for exactly our use case: 273 real GitHub issues from 8 Python repositories, organized chronologically, designed to measure whether coding agents improve through continual learning in a fixed environment.
+
+### Repositories
+
+| Repository | Tasks | Difficulty |
+|------------|-------|------------|
+| django/django | 50 | All easy |
+| sympy/sympy | 50 | 25 easy, 25 medium |
+| sphinx-doc/sphinx | 44 | 22 easy, 17 medium, 5 hard |
+| matplotlib/matplotlib | 34 | 15 easy, 19 medium |
+| scikit-learn/scikit-learn | 32 | 13 easy, 18 medium, 1 hard |
+| astropy/astropy | 22 | 4 easy, 15 medium, 3 hard |
+| pydata/xarray | 22 | 5 easy, 15 medium, 2 hard |
+| pytest-dev/pytest | 19 | 8 easy, 8 medium, 3 hard |
+
+### Metrics (from continual learning literature)
+
+| Metric | What it measures | Formula |
+|--------|-----------------|---------|
+| **Forward Transfer (FT)** | Does past experience help with new tasks? | Accuracy on task i+1 after training through task i, minus baseline |
+| **Forgetting (F)** | Does learning new skills degrade old ones? | Average drop from peak performance on each old task |
+| **CL-F-beta** | Single score balancing learning vs. forgetting | Harmonic mean of plasticity and stability |
+| **Resolve Rate** | Does the agent actually fix the issue? | Proportion of patches that pass all tests |
+| **Steps to Completion** | Is the agent more efficient? | Number of tool calls to reach solution |
+| **Token Consumption** | Is it cheaper? | Total input+output tokens per task |
+| **Tool-Use Efficiency** | Does it pick the right tools? | Ratio of successful action time to total time |
+
+### General Capability Preservation
+
+After each LoRA consolidation, run **HumanEval** (164 problems, pass@1) and **MBPP** (427 problems, pass@1) to verify the skill adapter hasn't degraded general coding ability. Threshold: < 2% drop from base model. This follows the protocol established by Biderman et al. (2024) in "LoRA Learns Less and Forgets Less."
+
+### Conditions (run for every experiment)
+
+Every experiment is evaluated under four conditions using the same source data:
+
+1. **Base model** — no skill adapter, no retrieved context
+2. **Knowledge layer only** — base model + RAG over past session trajectories
+3. **Skill layer only** — base model + LoRA skill adapter, no retrieval
+4. **Both layers** — base model + LoRA skill adapter + RAG
+
+---
+
+## Experimental Phases
+
+The experiments are structured in three phases, each building on the previous. No single phase produces conclusive evidence on its own — the phases are designed so that combined, they provide statistically meaningful results across multiple repos, models, and task orderings.
+
+### Phase 1: Pilot (single repo, single model)
+
+**Goal:** Get the full pipeline working end-to-end. Produce directional results. Identify obvious failure modes before investing in large-scale runs.
+
+**Setup:**
+- **Repo:** django/django (50 tasks, all easy — lowest variance)
+- **Model:** Qwen 2.5 Coder 7B (fast iteration)
+- **Split:** Train on tasks 1-25, test on tasks 26-50
+- **Training strategy:** Full replay (Experiment 1 — simplest, establishes upper bound)
+
+**Protocol:**
+1. Run base model through all 50 tasks. Record resolve rate, steps, tokens per task.
+2. Run base model through tasks 1-25. Collect session trajectories.
+3. Synthesize trajectories into LoRA training data.
+4. Train LoRA skill adapter on synthesized data.
+5. Run adapted model through tasks 26-50. Record same metrics.
+6. Compare adapted vs. base on tasks 26-50.
+
+**What this tells us:** Does the pipeline work at all? Is there any directional signal? What breaks? This is NOT statistically significant — it's a single split on a single repo with a single model. It's a smoke test.
+
+**Estimated time:** ~2 hours local compute (7B model).
+
+### Phase 2: Cross-Validation (single repo, multiple splits, single model)
+
+**Goal:** Control for task ordering effects. Determine whether the pilot result is robust or an artifact of the specific split.
+
+**Setup:**
+- **Repo:** django/django (same as pilot)
+- **Model:** Qwen 2.5 Coder 7B (same as pilot)
+- **Splits:**
+  - Split A: Train 1-25, test 26-50 (same as pilot)
+  - Split B: Train 26-50, test 1-25 (reversed)
+  - Split C: Train odd tasks, test even tasks
+  - Split D: Random 25/25 split (seed=42)
+  - Split E: Random 25/25 split (seed=123)
+
+**Protocol:** Same as Phase 1, run independently for each split. Report mean and variance of Forward Transfer and Forgetting across all 5 splits.
+
+**What this tells us:** Is the effect consistent across orderings, or did we get lucky with the pilot split? If Forward Transfer is positive across 4/5 or 5/5 splits, the effect is robust for this repo+model. If it's 2/5 or 3/5, the effect is weak and ordering-dependent. If 0/5 or 1/5, the skill layer isn't working.
+
+**Statistical test:** Paired t-test or Wilcoxon signed-rank test on per-task metrics (adapted vs. base) across all splits. We need p < 0.05 to claim significance.
+
+**Estimated time:** ~10 hours local compute (5x Phase 1).
+
+### Phase 3: Multi-Repo, Multi-Model (full rigor)
+
+**Goal:** Establish whether the skill layer generalizes across different codebases and different models, or is specific to one repo/model pairing.
+
+**Setup:**
+- **Repos:** All 8 SWE-Bench-CL repositories
+- **Models:** All 4 target models:
+  - Qwen 2.5 Coder 7B (baseline small)
+  - Qwen 2.5 Coder 32B (primary large)
+  - DeepSeek-R1-Distill-Qwen 32B (reasoning variant)
+  - Command R 35B (tool-calling variant)
+- **Splits:** Best 2 splits from Phase 2 (the split designs that showed least variance)
+
+**Protocol:** For each repo x model x split combination:
+1. Run base model on train split, collect trajectories
+2. Synthesize + train LoRA
+3. Evaluate on test split under all 4 conditions
+4. Run HumanEval/MBPP capability check
+
+**What this tells us:** The full picture:
+- Does the skill layer help across repos of different sizes and difficulties?
+- Do larger models benefit more or less than smaller ones?
+- Does the reasoning model (DeepSeek-R1) learn differently than the coding model (Qwen Coder)?
+- Does the tool-calling model (Command R) show more improvement on tool-use efficiency?
+
+**Analysis:** Two-way ANOVA (repo x model) on Forward Transfer. Report effect sizes, not just p-values. Include negative results prominently.
+
+**Matrix:** 8 repos x 4 models x 2 splits = 64 experimental runs. Each run involves training + evaluation on ~25 tasks.
+
+**Estimated time:**
+- 7B runs (8 repos x 2 splits = 16 runs): ~32 hours local
+- 32B runs (8 repos x 3 models x 2 splits = 48 runs): cloud recommended, ~96 GPU-hours
+
+### Phase Summary
+
+| Phase | Repos | Models | Splits | Total Runs | Purpose |
+|-------|-------|--------|--------|------------|---------|
+| 1. Pilot | 1 | 1 | 1 | 1 | Does it work at all? |
+| 2. Cross-Val | 1 | 1 | 5 | 5 | Is it robust to ordering? |
+| 3. Full | 8 | 4 | 2 | 64 | Does it generalize? |
+
+Phase 1 can produce a result in an afternoon. Phase 2 in a weekend. Phase 3 is a multi-week effort, potentially the core of a paper.
+
+---
+
+## Anti-Forgetting Strategy Experiments
+
+The following experiments (1-5) test different LoRA training strategies. Each is run within the Phase 2 or Phase 3 framework above — same repos, same splits, same metrics. The only variable is the training strategy.
+
+---
+
 ## Experiment 1: Full Replay Baseline
 
 ### Hypothesis
-Retraining the LoRA adapter from scratch on ALL accumulated synthetic data at each consolidation step will produce near-perfect retention of past knowledge, establishing an upper bound on retention and a lower bound on training efficiency.
+Retraining the LoRA adapter from scratch on ALL accumulated synthetic data at each consolidation step will produce near-perfect retention of past skills, establishing an upper bound on retention and a lower bound on training efficiency.
 
 ### Methodology
 - Accumulate synthetic training pairs from sessions 1 through N
@@ -59,7 +202,7 @@ A fixed-size replay buffer with intelligent prioritization can achieve 80%+ of f
 - Identified knee of the buffer-size vs. retention curve
 
 ### Expected Outcome
-Difficulty-based priority will outperform recency because it focuses capacity on knowledge the model is actively forgetting. Buffer size 2000 will likely be the sweet spot. Mixing ratio matters more than expected.
+Difficulty-based priority will outperform recency because it focuses capacity on skills the model is actively forgetting. Buffer size 2000 will likely be the sweet spot. Mixing ratio matters more than expected.
 
 ### Compute Estimate
 - 5 buffer sizes x 4 priority schemes x 3 mixing ratios = 60 configurations
@@ -70,10 +213,10 @@ Difficulty-based priority will outperform recency because it focuses capacity on
 ## Experiment 3: Mixture of LoRA Experts (MoLE)
 
 ### Hypothesis
-Separating knowledge into specialized adapters (e.g., tool usage, error recovery, code conventions, workflow patterns) reduces inter-knowledge interference, resulting in less catastrophic forgetting than a single monolithic adapter with equivalent total parameter count.
+Separating skills into specialized adapters (e.g., tool usage, error recovery, code conventions, workflow patterns) reduces inter-skill interference, resulting in less catastrophic forgetting than a single monolithic adapter with equivalent total parameter count.
 
 ### Methodology
-- Define 3-5 knowledge categories from the synthesized data types
+- Define 3-5 skill categories from the synthesized data types
 - Train a separate LoRA adapter for each category
 - Train a lightweight router (small MLP on query embeddings) that selects which adapter(s) to activate per query
 - At inference time, merge the selected adapters' deltas: W' = W + sum(w_i * B_i @ A_i)
@@ -90,7 +233,7 @@ Separating knowledge into specialized adapters (e.g., tool usage, error recovery
 - No individual expert category shows > 10% degradation after 50 sessions
 
 ### Expected Outcome
-MoLE will show a significant advantage for heterogeneous knowledge (tool usage vs. code conventions are quite different) but less advantage for homogeneous knowledge. Router accuracy will be the limiting factor.
+MoLE will show a significant advantage for heterogeneous skills (tool usage vs. code conventions are quite different) but less advantage for homogeneous skills. Router accuracy will be the limiting factor.
 
 ### Compute Estimate
 - 3 expert configurations x 3 top-k values = 9 configurations
@@ -148,11 +291,11 @@ Dynamically allocating rank budget based on session information content — and 
 
 ### Success Criteria
 - Adaptive allocation retains > 15% more information per parameter than fixed-rank approaches
-- SVD compression preserves > 70% of compressed sessions' knowledge at 50% rank reduction
+- SVD compression preserves > 70% of compressed sessions' skills at 50% rank reduction
 - The retention curve shows a graceful decay (power law) rather than cliff-edge forgetting
 
 ### Expected Outcome
-Sessions vary wildly in information content. A session where the agent learns a completely new deployment pipeline should need more rank than one where it does routine debugging. Adaptive allocation should be strictly better than fixed allocation. SVD compression will work well for procedural/behavioral knowledge but poorly for any specific facts that slipped into the adapter.
+Sessions vary wildly in information content. A session where the agent learns a completely new deployment pipeline should need more rank than one where it does routine debugging. Adaptive allocation should be strictly better than fixed allocation. SVD compression will work well for procedural/behavioral skill but poorly for any specific facts that slipped into the adapter.
 
 ### Compute Estimate
 - 3 budgets x 3 SVD targets x 2 merge strategies = 18 configurations
@@ -163,7 +306,7 @@ Sessions vary wildly in information content. A session where the agent learns a 
 ## Experiment 6: Synthesis Format Comparison
 
 ### Hypothesis
-The format of synthesized training data significantly affects what kind of environmental knowledge the adapter encodes. Chain-of-thought and reflexion-style formats will outperform simple QA for procedural knowledge, while contextual formats will better preserve environment-specific details.
+The format of synthesized training data significantly affects what kind of environmental skill the adapter encodes. Chain-of-thought and reflexion-style formats will outperform simple QA for procedural skills, while contextual formats will better preserve environment-specific details.
 
 ### Methodology
 Train separate adapters from the same trajectory data, synthesized into five formats:
@@ -204,16 +347,16 @@ A: "This project uses SQLAlchemy async with a connection pool configured in..."
 
 ### Variables
 - **Independent:** Synthesis format (A, B, C, D, E)
-- **Dependent:** Environmental fluency score, retention accuracy by knowledge type, adapter training loss, downstream task performance
+- **Dependent:** Environmental fluency score, retention accuracy by skill type, adapter training loss, downstream task performance
 - **Controlled:** Same source trajectories, same base model, same LoRA config, same number of training tokens per format
 
 ### Success Criteria
 - Statistically significant difference in fluency score between at least 2 formats (p < 0.05)
-- Clear pattern of which format works best for which knowledge type
+- Clear pattern of which format works best for which skill type
 - At least one format outperforms the others by > 10% on the environmental fluency benchmark
 
 ### Expected Outcome
-Format D (reflexion) will likely perform best for error recovery knowledge because it explicitly encodes the failure→diagnosis→fix pattern. Format E (contextual) may overfit to specific project details. Format C (DPO) requires both good and bad trajectories but should produce the strongest behavioral shifts.
+Format D (reflexion) will likely perform best for error recovery skills because it explicitly encodes the failure→diagnosis→fix pattern. Format E (contextual) may overfit to specific project details. Format C (DPO) requires both good and bad trajectories but should produce the strongest behavioral shifts.
 
 ### Compute Estimate
 - 5 formats x 3 repetitions (for statistical significance) = 15 training runs
@@ -284,37 +427,37 @@ This is the highest-risk experiment. If error amplification is severe, self-synt
 
 ---
 
-## Experiment 9: Hybrid Ablation (LoRA + RAG vs. Either Alone)
+## Experiment 9: Skill Layer + Knowledge Layer Ablation
 
 ### Hypothesis
-A hybrid system that uses LoRA for procedural/behavioral knowledge and RAG for episodic/factual knowledge will outperform either system in isolation. The LoRA adapter reduces context budget consumption for stable environmental knowledge, freeing more context for the RAG-retrieved specifics that actually need to be in the prompt.
+A hybrid system that uses a LoRA skill layer for procedural/behavioral learning and a knowledge layer (RAG) for episodic/factual retrieval will outperform either in isolation. The skill adapter reduces the context budget needed for stable environmental competence, freeing more context for the specific facts and details that actually need to be in the prompt.
 
 ### Methodology
 Run the same task suite under four conditions:
-1. **No memory** — Base model with no adapter and no retrieved context
-2. **RAG only** — Base model with trajectory-derived documents retrieved into context
-3. **LoRA only** — Adapted model with no retrieved context
-4. **LoRA + RAG** — Adapted model with retrieved context
+1. **No memory** — Base model, no skill adapter, no retrieved context
+2. **Knowledge layer only** — Base model + RAG (trajectory-derived documents retrieved into context)
+3. **Skill layer only** — Skill-adapted model, no retrieved context
+4. **Both layers** — Skill-adapted model + RAG
 
-Use the same source data for both the RAG index and the LoRA training data, so any differences are purely from the storage/access mechanism, not the information available.
+Use the same source data for both the knowledge index and the skill training data, so any differences are purely from the mechanism, not the information available.
 
 ### Variables
-- **Independent:** Memory configuration (4 conditions above)
+- **Independent:** Layer configuration (4 conditions above)
 - **Dependent:** Task success rate, steps to completion, context tokens used, errors/retries, inference latency
 - **Controlled:** Source data (identical), base model, task suite, evaluation procedure
 
 ### Success Criteria
-- LoRA + RAG outperforms RAG-only on at least one metric by > 10%
-- LoRA-only outperforms no-memory on task success rate
-- Clear characterization of what LoRA handles vs. what RAG handles
+- Both layers together outperform knowledge-only on at least one metric by > 10%
+- Skill-only outperforms no-memory on task success rate
+- Clear characterization of what the skill layer handles vs. what the knowledge layer handles
 
 ### Expected Outcome
-- RAG will win on factual recall (specific details from past sessions)
-- LoRA will win on behavioral fluency (fewer steps, better tool selection, more idiomatic code)
-- Hybrid will win overall because it gets both advantages
-- LoRA-only will use significantly less context than RAG-only for equivalent background knowledge
+- Knowledge layer will win on factual retrieval (specific details from past sessions)
+- Skill layer will win on behavioral fluency (fewer steps, better tool selection, more efficient navigation)
+- Both layers together will win overall because skills and knowledge are complementary
+- Skill-only will use significantly less context than knowledge-only for equivalent environmental competence
 
-**If RAG-only matches or beats the hybrid:** That's a clean negative result. It means weight-based memory doesn't add value over context-based retrieval, and the complexity of the training pipeline is unjustified. This should be published as a negative result.
+**If knowledge-only matches or beats the combined approach:** That's a clean negative result. It means the skill layer doesn't add value on top of good knowledge retrieval. That should be published — it saves the community from building something that doesn't work.
 
 ### Compute Estimate
 - 4 conditions x 50 tasks x 3 repetitions = 600 task evaluations
@@ -323,15 +466,15 @@ Use the same source data for both the RAG index and the LoRA training data, so a
 
 ---
 
-## Experiment 10: Staleness and Environmental Drift
+## Experiment 10: Skill Staleness and Environmental Drift
 
 ### Hypothesis
-When the environment changes (e.g., codebase refactored, deployment pipeline modified), an outdated LoRA adapter will initially degrade performance compared to no adapter, because the adapter's encoded patterns conflict with the new reality. However, after re-consolidation on new sessions, the adapter should recover.
+When the environment changes (e.g., codebase refactored, deployment pipeline modified), a stale skill adapter will initially degrade performance compared to no adapter, because the adapter's learned skills conflict with the new reality. However, after re-consolidation on new sessions, the adapter should recover — the agent relearns the new patterns.
 
 ### Methodology
-- Train an adapter on 30 sessions in Environment v1 (specific codebase, deployment pipeline, conventions)
+- Train a skill adapter on 30 sessions in Environment v1 (specific codebase, deployment pipeline, conventions)
 - Modify the environment to v2 (rename key files, change deployment target, alter conventions)
-- Measure adapter performance in v2 without retraining
+- Measure skill adapter performance in v2 without retraining (stale skills)
 - Measure how quickly the adapter recovers after consolidation on new v2 sessions (1, 5, 10, 20 sessions)
 
 ### Variables
@@ -340,15 +483,15 @@ When the environment changes (e.g., codebase refactored, deployment pipeline mod
 - **Controlled:** Base model, LoRA config, task suite (adapted for v2)
 
 ### Success Criteria
-- Quantified degradation from stale adapters (measured, not assumed)
-- Recovery curve: after N sessions of retraining in v2, performance returns to pre-change levels
-- Identified indicators that could trigger automatic adapter invalidation
+- Quantified degradation from stale skills (measured, not assumed)
+- Recovery curve: after N sessions of retraining in v2, skill performance returns to pre-change levels
+- Identified indicators that could trigger automatic skill adapter invalidation
 
 ### Expected Outcome
 Minor environment changes (renaming a few files) will cause minimal degradation because LoRA encodes patterns, not specific paths. Major changes (switching from REST to GraphQL) will cause significant degradation — the adapter will actively fight the new context. Recovery should be fast (5-10 sessions) because the base model's general capabilities are preserved and just the adapter needs updating.
 
 ### Implications
-If staleness degradation is severe and recovery is slow, the system needs an automatic staleness detection mechanism — perhaps comparing adapter predictions with actual environment state and invalidating when drift exceeds a threshold.
+If staleness degradation is severe and recovery is slow, the system needs automatic staleness detection — perhaps monitoring when the skill adapter's behaviors conflict with current environmental signals and invalidating when drift exceeds a threshold.
 
 ### Compute Estimate
 - 3 change severities x 5 recovery checkpoints x 3 repetitions = 45 evaluations
@@ -356,37 +499,64 @@ If staleness degradation is severe and recovery is slow, the system needs an aut
 
 ---
 
-## Experiment Execution Order
+## Execution Order
 
-Experiments are ordered by dependency and information value:
+Experiments are ordered by phase and dependency:
 
-1. **Experiment 1** (Full Replay) — Establishes upper bound, required for all comparisons
-2. **Experiment 6** (Synthesis Format) — Determines which format to use for all subsequent experiments
-3. **Experiment 7** (Synthesis Budget) — Determines optimal pairs-per-session for data generation
-4. **Experiment 9** (Hybrid Ablation) — The fundamental question: does LoRA help at all?
-5. **Experiment 2** (Partial Replay) — Main forgetting mitigation approach
-6. **Experiment 4** (EWC-LoRA) — Novel anti-forgetting contribution
-7. **Experiment 3** (MoLE) — Alternative architecture for forgetting mitigation
-8. **Experiment 5** (Adaptive Rank) — Most novel experiment, depends on insights from 2/4
-9. **Experiment 10** (Staleness) — Practical concern, run once best training strategy is identified
-10. **Experiment 8** (Self-Synthesis) — Highest risk, run last after pipeline is stable
+### During Phase 1 (Pilot)
+1. **Experiment 1** (Full Replay) — uses the simplest training strategy to get end-to-end results
+
+### During Phase 2 (Cross-Validation)
+2. **Experiment 6** (Synthesis Format) — determines which format to use going forward
+3. **Experiment 7** (Synthesis Budget) — determines optimal pairs-per-session
+4. **Experiment 9** (Skill + Knowledge Ablation) — the fundamental question, now with cross-validated rigor
+
+### During Phase 3 (Multi-Repo, Multi-Model)
+5. **Experiment 2** (Partial Replay) — main forgetting mitigation, run across repos/models
+6. **Experiment 4** (EWC-LoRA) — novel anti-forgetting contribution
+7. **Experiment 3** (MoLE) — alternative architecture, compare against 2 and 4
+8. **Experiment 5** (Adaptive Rank) — most novel, uses insights from 2/4/3
+9. **Experiment 10** (Staleness) — practical concern, run once best strategy is identified
+10. **Experiment 8** (Self-Synthesis) — highest risk, run last with stable pipeline
 
 ---
 
-## Total Compute Budget
+## Target Models
 
-| Experiment | GPU-Hours | API Costs |
-|------------|-----------|-----------|
-| 1. Full Replay | 20 | $5 |
-| 2. Partial Replay | 30 | $5 |
-| 3. MoLE | 9 | $5 |
-| 4. EWC-LoRA | 22 | $5 |
-| 5. Adaptive Rank | 18 | $5 |
-| 6. Synthesis Format | 8 | $15 |
-| 7. Synthesis Budget | 5 | $5 |
-| 8. Self-Synthesis | 5 | $20 |
-| 9. Hybrid Ablation | 10 | $100 |
-| 10. Staleness | 20 | $10 |
-| **Total** | **~147** | **~$175** |
+Experiments run on an M4 Mac Mini with 32GB unified memory. Four models chosen for different experimental roles:
 
-At GCP spot L4 pricing (~$0.70/hr), total GPU cost is approximately **$103**. Combined with API costs, the full experiment suite costs roughly **$280**.
+| Model | Size | Role in Experiments |
+|-------|------|---------------------|
+| **Qwen 2.5 Coder 32B** (Q4_K_M) | ~18GB | Primary skill training target — strongest open coding model |
+| **DeepSeek-R1-Distill-Qwen 32B** (Q4_K_M) | ~18GB | Reasoning/debugging skill experiments |
+| **Command R 35B** (Q4_K_M) | ~20GB | Tool-calling skill experiments — built for RAG and tool use |
+| **Qwen 2.5 Coder 7B** (FP16) | ~14GB | Fast iteration, smoke tests, rapid prototyping |
+
+Most experiments use the 7B model first for fast iteration, then validate findings on 32B models. The 7B model runs fast enough for quick feedback loops; the 32B models are for confirming results at scale.
+
+### Inference Stack
+
+Models run locally via **Ollama** or **LM Studio**, which expose an OpenAI-compatible API. OpenClaw connects to this as a custom provider. No cloud inference needed for experimentation.
+
+### Training Stack
+
+- **7B LoRA training:** Feasible locally on M4 via MLX or Unsloth (minutes per run)
+- **32B QLoRA training:** Possible locally with MLX but tight on memory. Fall back to GCP spot L4/A100 if needed.
+- **Synthesis (data generation):** Run locally using the 32B model, or use Anthropic/OpenAI API for comparison
+
+### Compute Budget
+
+| Experiment | Local Est. | Cloud Fallback | API Costs |
+|------------|-----------|----------------|-----------|
+| 1. Full Replay | ~5 hrs | 20 GPU-hrs | $5 |
+| 2. Partial Replay | ~8 hrs | 30 GPU-hrs | $5 |
+| 3. MoLE | ~3 hrs | 9 GPU-hrs | $5 |
+| 4. EWC-LoRA | ~6 hrs | 22 GPU-hrs | $5 |
+| 5. Adaptive Rank | ~5 hrs | 18 GPU-hrs | $5 |
+| 6. Synthesis Format | ~2 hrs | 8 GPU-hrs | $15 |
+| 7. Synthesis Budget | ~1 hr | 5 GPU-hrs | $5 |
+| 8. Self-Synthesis | ~1 hr | 5 GPU-hrs | $20 |
+| 9. Skill+Knowledge Ablation | ~3 hrs | 10 GPU-hrs | $50 |
+| 10. Staleness | ~5 hrs | 20 GPU-hrs | $10 |
+
+Local estimates are for 7B model experiments. 32B experiments will be slower locally or use cloud. API costs are for synthesis using Claude/GPT when comparing against local synthesis quality.

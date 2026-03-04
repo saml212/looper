@@ -1,107 +1,108 @@
-# The Problem: Memory in AI Agents
+# The Problem: Agents Don't Learn Skills
 
-## The Current State
+## Every Session Is Day One
 
-Modern AI agents — coding assistants, autonomous task runners, personal AI companions — operate in stateless sessions. Each time a session begins, the agent starts from zero. It has no memory of what it did yesterday, what worked, what failed, or how the user's environment is structured. Every session is day one on the job.
+Modern AI agents operate in stateless sessions. Each time a session begins, the agent has the same general capabilities it always had — but zero learned skill in the specific environment it's operating in. It doesn't know which tools work best for which tasks in this project. It doesn't know the deployment patterns. It doesn't know that the last three times it tried approach A, approach B worked better. Every session, it figures it all out from scratch.
 
-The industry's current answer to this problem is **context engineering**: stuffing relevant information into the prompt at inference time via retrieval-augmented generation (RAG), system prompts, project config files, or long context windows. Tools like Claude Code read files at session start. Cursor and Windsurf index codebases and inject relevant chunks. OpenClaw maintains markdown memory files with semantic search.
+This is like hiring a contractor who's brilliant but has amnesia. They show up every morning with the same raw talent, but they never get faster. They never develop the instincts that come from doing the same kind of work in the same environment day after day.
 
-These approaches work. But they have fundamental limitations that become more visible as agents take on longer-lived, more complex roles.
+## Skills vs. Knowledge
 
-## Why Context Engineering Isn't Enough
+There's an important distinction that gets lost when people talk about "agent memory."
 
-### 1. Context Budget Competition
+**Knowledge** is information. Facts. What's in the docs. "This project uses PostgreSQL." "The API is deployed on Cloud Run." "Tests are in the `tests/` directory." Knowledge can be looked up. You can write it down, retrieve it, paste it into a prompt. Context windows, RAG, project config files — these are all good tools for giving an agent knowledge.
 
-Every token spent on background context is a token unavailable for the actual task. A coding agent with a 200K token context window that burns 60K tokens on environmental documentation, past session summaries, and retrieved memories has only 140K tokens left for the codebase it's currently analyzing, the conversation with the user, and its chain-of-thought reasoning.
+**Skills** are different. Skills are how you use tools efficiently. How you navigate an environment. The instinct to check the logs first when a deployment fails, because you've seen that pattern before. The fluency that lets you go straight to the right file instead of searching. The behavioral pattern of running the linter before committing because you've been burned by CI failures.
 
-This tradeoff worsens as the agent accumulates more experience. After 100 sessions, there's far more potentially relevant context than after 5. The retrieval system must become increasingly selective, and increasingly risks omitting something important.
+A human employee on Day 1 can be given all the knowledge they need — hand them the docs, the wiki, the onboarding guide. But they still won't have the skills. Skills come from doing the work. From making mistakes and adjusting. From building up patterns through repetition until the right approach becomes instinctive.
 
-### 2. Attention Degradation
+**Agents today have access to unlimited knowledge but develop zero skills.**
 
-The "Lost in the Middle" problem (Liu et al., 2023) demonstrated that LLMs attend poorly to information positioned in the middle of long contexts — accuracy drops to 76-82% for mid-context information versus 85-95% at the edges. As more context is injected, more of it falls into the attention dead zone. Longer context windows don't fully solve this because the degradation scales with length.
+Everything the industry does for agent memory — RAG, long context, memory files, system prompts — operates on the knowledge axis. And it works. But nobody is working on the skill axis. Nobody is building a system where the agent actually gets better at operating in its environment the longer it works there.
 
-This means that background environmental knowledge — the kind of stable, always-relevant information about how a project is structured — is precisely the kind of knowledge most likely to be ignored when stuffed into a growing context window.
+## How Humans Acquire Skills
 
-### 3. Repeated Processing Cost
+Consider a software engineer working on a specific project:
 
-With context-based memory, the agent re-processes the same background information on every single inference call. If the agent knows that deployments go through GitHub Actions → Docker → Cloud Run, that knowledge is re-tokenized and re-attended-to on every request, consuming compute that adds no new information. This is the equivalent of a human employee re-reading the company handbook before answering every question.
+**Week 1:** They have all the knowledge — docs, codebase access, team wiki. But they're slow. They search for things they'll later find instantly. They try deployment approaches that the team abandoned months ago. They run into errors that experienced team members would avoid reflexively. Their raw intelligence is the same as it will be on Week 12, but their environmental skill is near zero.
 
-### 4. Retrieval Fragility
+**Week 4:** They've internalized the project's rhythms. They know which files to check for which kinds of bugs. They've developed a muscle memory for the deployment flow. When something breaks, they have a mental decision tree of things to check — not because they memorized a checklist, but because they've seen these failure modes before. They're faster, not because they're smarter or have more information, but because they've developed **skills specific to this environment**.
 
-RAG systems make binary inclusion/exclusion decisions about what to retrieve. A slightly different query embedding can surface completely different context, leading to inconsistent behavior. The agent might "remember" a deployment workflow in one session and completely miss it in the next because the retrieval query happened to surface different chunks.
+**Week 12:** They're fluent. They navigate the codebase instinctively. They recognize patterns across systems ("this looks like the same race condition we had in the billing service"). Their tool usage is efficient — they reach for the right tool first, not after trying three others. This fluency isn't knowledge. It's the accumulated result of operating in the same environment repeatedly.
 
-## The Distinction: Competence vs. Recall
+Every day is like a context window. At the end of the day, the specifics of what happened fade. But the skills — the patterns, the instincts, the fluency — those consolidate. The engineer wakes up the next morning without remembering every detail of yesterday, but they're measurably more skilled than they were the day before.
 
-Not all knowledge is the same. Human cognitive science distinguishes between at least three types of memory:
+## The Missing Layer
 
-**Episodic memory** — what happened at 3pm on Tuesday. Specific events bound to specific contexts. "The API returned a 403 because the auth token had an extra trailing space." This is precise, contextual, and changes constantly.
+The modern agent stack looks roughly like this:
 
-**Semantic memory** — dogs have four legs. General knowledge abstracted from experience. "This codebase uses FastAPI with SQLAlchemy and Alembic migrations." Stable facts that don't change often.
+```
+┌─────────────────────────┐
+│     Context Window      │  ← What's happening right now
+├─────────────────────────┤
+│  Memory / Retrieval     │  ← Knowledge from past sessions
+├─────────────────────────┤
+│     Base Model          │  ← General intelligence
+└─────────────────────────┘
+```
 
-**Procedural memory** — how to ride a bike. Skills and behavioral patterns. "When debugging a failing deployment, first check the Cloud Run logs, then verify the Docker build, then check the GitHub Actions workflow." Strategies, workflows, and competence patterns.
+Knowledge lives in the memory/retrieval layer. General capability lives in the base model. But there's no layer for **learned skills** — the accumulated environmental fluency that should develop through experience.
 
-Current context engineering treats all three the same way: retrieve text, inject it into the prompt. But they have very different characteristics:
+Looper adds that layer:
 
-| Property | Episodic | Semantic | Procedural |
-|----------|----------|----------|------------|
-| Changes how often? | Constantly | Slowly | Slowly |
-| Precision required? | Exact | Moderate | Pattern-level |
-| Best storage? | Structured retrieval | Either | Weights |
-| Context cost? | Low (specific) | Medium | High (verbose) |
+```
+┌─────────────────────────┐
+│     Context Window      │  ← What's happening right now
+├─────────────────────────┤
+│  Memory / Retrieval     │  ← Knowledge from past sessions
+├─────────────────────────┤
+│     Skill Adapter       │  ← Learned environmental fluency (LoRA)
+├─────────────────────────┤
+│     Base Model          │  ← General intelligence
+└─────────────────────────┘
+```
 
-Procedural knowledge — the kind that makes an employee efficient at navigating their specific work environment — is the most expensive to represent in context (it's verbose, it's strategies and heuristics, not terse facts) and the least likely to change between sessions. It's also the kind of knowledge that neural network weight updates are best at encoding: statistical patterns across many examples.
+The skill adapter is a thin LoRA layer trained on the agent's own experience. As the agent operates in an environment — using tools, navigating code, deploying, debugging — that experience is periodically consolidated into the adapter. Old context gets turned into trained skills.
 
-## The Employee Analogy
+This isn't replacing anything. The context window still handles the present. Memory/retrieval still handles knowledge. The base model still provides general intelligence. The skill adapter adds something new: the ability to get better at operating in a specific environment over time.
 
-Consider a new software engineer joining a team:
+## What LoRA Is Good At (And What It Isn't)
 
-**Day 1:** They have the same general intelligence they'll have on Day 90. But they need everything explained — the codebase structure, the deployment pipeline, the testing conventions, where to find logs, which services talk to which. Their "context window" is consumed by environmental orientation.
+This framing matters because LoRA adapters have specific strengths that align with skills, not knowledge.
 
-**Day 30:** They've internalized the project structure. They know which files to look at for different types of changes. They know the deployment flow. They don't need to be told these things anymore — the knowledge has moved from explicit (looking it up) to implicit (just knowing). Their context window is now free for the actual problem at hand.
+Research shows that LoRA is excellent at encoding:
+- Behavioral patterns (how to approach problems)
+- Tool usage strategies (which tools to use when)
+- Style and convention adherence (matching project norms)
+- Domain-specific heuristics (debugging decision trees)
 
-**Day 90:** They have deep fluency. They recognize patterns — "oh, this looks like the same bug we had in the billing service" — and apply learned strategies without conscious effort. Their efficiency comes not from having more information available, but from having internalized how to operate in this specific environment.
-
-AI agents today are stuck on Day 1. Every session, they need the full orientation. Context engineering is the equivalent of handing the employee the handbook every morning. It works, but it doesn't let the agent build genuine environmental fluency.
-
-## The Hypothesis
-
-**Periodic LoRA consolidation of agent experience can shift environmental fluency — tool usage patterns, codebase conventions, deployment workflows, error resolution strategies — from explicit context into implicit weight-based knowledge, making the agent progressively more efficient at operating within a specific environment over time.**
-
-This is not about replacing context engineering. Context remains essential for:
-- What's happening right now (current task, current conversation)
-- Episodic recall (specific facts from specific sessions)
+And poor at encoding:
+- Precise facts ("the database password is xyz")
+- Specific episodic details ("in session 47, the API returned a 403")
 - Rapidly changing information
 
-The LoRA adapter handles what's stable and procedural:
-- How this project's codebase is structured
-- Common debugging and deployment workflows for this environment
-- The team's coding conventions and preferences
-- Error resolution strategies learned from past failures
-- Tool usage patterns specific to this project's infrastructure
+This maps perfectly onto the skills vs. knowledge distinction. LoRA is a skill encoder, not a knowledge store. Using it as a knowledge store would be fighting its strengths. Using it as a skill layer is working with the grain of the technology.
 
-The result should be measurable: an agent with a well-consolidated adapter should complete tasks in fewer steps, make fewer false starts, consume less context for environmental setup, and choose correct tools and approaches more quickly than the same agent without the adapter.
+## The Consolidation Loop
 
-## What Success Looks Like
+The skill adapter doesn't update in real time. Like human skill acquisition, it works through a consolidation cycle:
 
-The win condition is not "LoRA beats RAG." It's "LoRA + RAG beats RAG alone on metrics that matter."
+1. **Experience** — The agent operates in its environment across multiple sessions, producing trajectories of actions, observations, successes, and failures
+2. **Synthesis** — Periodically, those trajectories are processed to extract the environmental skills embedded in them: what tools worked, what approaches succeeded, what patterns emerged
+3. **Training** — The extracted skills are consolidated into the LoRA adapter through efficient fine-tuning
+4. **Application** — On the next session, the agent operates with the updated skill adapter, and the cycle repeats
+
+Each cycle makes the agent slightly more fluent in its environment. Not by giving it more information (that's what the context window and memory layer are for) but by making it inherently better at operating — the same way sleeping on a problem makes a human better at it the next day, even without new information.
+
+## What We're Testing
+
+The core question is simple: **does this actually work?**
 
 Specifically:
-- **Context budget savings**: The adapted agent needs less context for environmental knowledge, freeing tokens for the actual task
-- **Fewer steps to completion**: The agent navigates the environment more efficiently
-- **Fewer errors and retries**: The agent makes better first-attempt choices about tools, patterns, and approaches
-- **Consistency**: The adapted agent's environmental fluency doesn't depend on retrieval query quality
-- **Graceful accumulation**: Performance improves with more experience, not just more data in the retrieval store
+- Does an agent with a skill adapter complete tasks faster (fewer steps, fewer retries)?
+- Does it make better first-attempt tool selections?
+- Does it need less context to operate effectively in a familiar environment?
+- Does skill accumulate over time, or does catastrophic forgetting erase old skills as new ones are learned?
+- And critically: does the skill adapter add measurable value on top of what good memory/retrieval already provides?
 
-And the honest failure condition: if a well-implemented RAG system over the same trajectory data produces equivalent or better results on all of these metrics, then the LoRA approach doesn't justify its complexity. That's a legitimate finding worth documenting.
-
-## What This Framework Tests
-
-This repository provides the tools to rigorously test the hypothesis above. It includes:
-
-1. **Experience collection** from OpenClaw agent sessions
-2. **Synthetic data generation** that extracts environmental knowledge from trajectories
-3. **Multiple LoRA training strategies** with different approaches to catastrophic forgetting
-4. **An evaluation framework** that measures environmental fluency, not just fact recall
-5. **Baseline comparisons** against RAG-only and context-stuffing approaches
-
-The goal is empirical answers, not optimistic demos. Every experiment is pre-registered with hypotheses and success criteria. Negative results are published alongside positive ones.
+If the answer to the last question is no — if good knowledge retrieval alone accounts for all the gains — then the skill layer doesn't justify its complexity. That's a legitimate finding. The goal is truth, not confirmation.

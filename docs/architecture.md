@@ -2,11 +2,11 @@
 
 ## System Overview
 
-RECALL is structured as a pipeline with five components. The first (agent loop) and last (serving) use existing infrastructure. The middle three (collection, synthesis, training) are where the framework provides research tooling, and the evaluation layer wraps around everything.
+Looper is structured as a pipeline with five components. The first (agent loop) and last (serving) use existing infrastructure. The middle three (collection, synthesis, training) are where the framework provides research tooling, and the evaluation layer wraps around everything.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                          THE RECALL PIPELINE                                │
+│                        THE LOOPER PIPELINE                                  │
 │                                                                             │
 │  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐   ┌─────────────┐ │
 │  │   OPENCLAW    │──▸│  EXPERIENCE  │──▸│  SYNTHETIC   │──▸│   CONTINUAL │ │
@@ -31,7 +31,7 @@ RECALL is structured as a pipeline with five components. The first (agent loop) 
 
 ## Component 1: OpenClaw Agent (Existing)
 
-RECALL integrates with OpenClaw as the agent framework. We do not build our own agent — we instrument OpenClaw's existing agent loop.
+Looper adds a skill layer to OpenClaw agents. We do not build our own agent — we instrument OpenClaw's existing agent loop and add the consolidation pipeline on top.
 
 ### OpenClaw Session Format
 
@@ -64,17 +64,17 @@ OpenClaw supports custom LLM providers via OpenAI-compatible or Anthropic-compat
 {
   "models": {
     "providers": {
-      "recall-adapted": {
+      "looper-adapted": {
         "baseUrl": "http://localhost:8080/v1",
         "api": "openai-completions",
-        "models": [{"id": "recall-lora", "name": "RECALL LoRA-Adapted Model"}]
+        "models": [{"id": "looper-lora", "name": "Looper Skill-Adapted Model"}]
       }
     }
   }
 }
 ```
 
-This is how we serve the LoRA-adapted model back to OpenClaw — as a custom provider pointing to a local vLLM instance.
+This is how we serve the skill-adapted model back to OpenClaw — as a custom provider pointing to a local vLLM instance with the skill adapter loaded.
 
 ### OpenClaw Telemetry
 
@@ -101,12 +101,12 @@ Transforms raw OpenClaw session data into structured trajectories.
                     │
                     ▼
           ┌─────────────────┐
-          │  OpenClaw Parser │  recall/collectors/openclaw_parser.py
+          │  OpenClaw Parser │  looper/collectors/openclaw_parser.py
           └────────┬────────┘
                    │
                    ▼
           ┌─────────────────┐
-          │ AgentTrajectory  │  recall/models.py
+          │ AgentTrajectory  │  looper/models.py
           │ ┌─ SessionMeta  │
           │ ├─ AgentStep[]   │
           │ │  ├─ reasoning  │
@@ -140,7 +140,7 @@ class SessionStore:
 
 ## Component 3: Synthetic Data Generator
 
-Converts trajectories into LoRA training data. This is where data quality research happens.
+Converts trajectories into skill training data. This is where data quality research happens — extracting the right skills from noisy experience.
 
 ### Data Flow
 
@@ -149,7 +149,7 @@ AgentTrajectory
        │
        ▼
 ┌──────────────────┐
-│   Synthesizer    │  recall/synthesizers/
+│   Synthesizer    │  looper/synthesizers/
 │  ┌─ Prompts (A-E)│  Multiple synthesis formats
 │  ├─ LLM API call │  Anthropic / OpenAI / self-model
 │  └─ Validation   │  Confidence scoring, dedup
@@ -176,14 +176,14 @@ class Synthesizer(ABC):
     def synthesize(self, trajectory: AgentTrajectory) -> list[SynthesizedPair]: ...
 ```
 
-### Environmental Knowledge Focus
+### Environmental Skill Extraction
 
-The synthesis prompt specifically targets four categories of environmental knowledge:
+The synthesis prompt targets four categories of learnable skills:
 
-1. **Tool usage patterns** — How tools are used in this specific environment
-2. **Error recovery strategies** — What goes wrong and how to fix it
-3. **Code/project conventions** — Naming, structure, style, patterns
-4. **Workflow patterns** — Deployment, testing, review, debugging flows
+1. **Tool usage skills** — How to use the right tools efficiently in this environment
+2. **Error recovery skills** — Recognizing failure patterns and applying the correct fix
+3. **Convention skills** — Matching project norms for naming, structure, style
+4. **Workflow skills** — Navigating deployment, testing, review, and debugging flows
 
 ### Deduplication
 
@@ -193,7 +193,7 @@ Before adding new pairs to the training set, we compute embedding similarity aga
 
 ## Component 4: Continual Training
 
-Model-agnostic LoRA training with pluggable anti-forgetting strategies.
+Model-agnostic LoRA training that consolidates extracted skills into the adapter, with pluggable anti-forgetting strategies.
 
 ### Data Flow
 
@@ -202,7 +202,7 @@ SynthesizedPair[]
        │
        ▼
 ┌──────────────────┐
-│  Data Formatter  │  recall/trainers/data_formatter.py
+│  Data Formatter  │  looper/trainers/data_formatter.py
 │  Chat template   │  Model-agnostic tokenizer handling
 └────────┬─────────┘
          │
@@ -248,17 +248,28 @@ Each anti-forgetting strategy implements this interface with its own update logi
 | Full Replay | Retrains on everything every time |
 | Partial Replay | Fixed buffer with priority eviction |
 | EWC-LoRA | Fisher information penalty on important params |
-| MoLE | Separate adapters per knowledge type |
+| MoLE | Separate adapters per skill type |
 | Adaptive Rank | Dynamic rank + SVD compression of old sessions |
 
-### Model Agnostic Design
+### Target Models
 
-The framework doesn't assume a specific base model. Configuration specifies:
+The framework is model-agnostic — any HuggingFace-compatible model that works with PEFT can be used. For our experiments, we target four models chosen for an M4 Mac Mini with 32GB unified memory:
+
+| Model | Params | Quantized Size | Role |
+|-------|--------|----------------|------|
+| **Qwen 2.5 Coder 32B** | 32B | ~18GB (Q4_K_M) | Primary coding experiments — strongest open coding model at this size |
+| **DeepSeek-R1-Distill-Qwen 32B** | 32B | ~18GB (Q4_K_M) | Reasoning/debugging experiments — distilled from DeepSeek R1 |
+| **Command R 35B** | 35B | ~20GB (Q4_K_M) | Tool-calling experiments — built specifically for RAG and tool use |
+| **Qwen 2.5 Coder 7B** | 7B | ~4GB (Q4) / ~14GB (FP16) | Fast iteration — runs at full precision, near-instant inference |
+
+The 32B models are the "Goldilocks zone" for 32GB unified memory: ~18-20GB for the model leaves room for the OS, Ollama/LM Studio, and the training pipeline. The 7B model runs fast enough for rapid prototyping and smoke tests.
+
+### Model Configuration
 
 ```yaml
-base_model: "unsloth/Qwen2.5-Coder-7B-Instruct-bnb-4bit"
+base_model: "Qwen/Qwen2.5-Coder-32B-Instruct"  # or any HF-compatible model
+quantization: "Q4_K_M"                            # GGUF quantization level
 max_seq_length: 4096
-load_in_4bit: true
 lora:
   r: 16
   target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
@@ -266,37 +277,29 @@ lora:
   lora_dropout: 0.05
 ```
 
-Any HuggingFace-compatible model that works with PEFT/Unsloth can be used.
+### Local Inference Stack
 
----
-
-## Component 5: Multi-LoRA Serving (Existing)
-
-We use vLLM for self-hosted serving with multi-LoRA support.
-
-### Serving Architecture
+For experiments, we run models locally via Ollama or LM Studio, which expose an OpenAI-compatible API. OpenClaw connects to this as a custom provider.
 
 ```
 OpenClaw Agent
        │
        │  HTTP (OpenAI-compatible API)
        ▼
-┌──────────────────┐
-│      vLLM        │
-│  ┌────────────┐  │
-│  │ Base Model  │  │  Loaded once, shared across all requests
-│  │ (frozen)    │  │
-│  └────────────┘  │
-│  ┌────────────┐  │
-│  │ Adapter     │  │  Hot-swapped per request
-│  │ Registry    │  │  based on agent_id/project
-│  └────────────┘  │
-└──────────────────┘
+┌──────────────────────────┐
+│   Ollama / LM Studio     │
+│  ┌────────────────────┐  │
+│  │ Base Model (GGUF)   │  │  Loaded once
+│  │ + Skill Adapter     │  │  LoRA merged or applied at load time
+│  └────────────────────┘  │
+└──────────────────────────┘
 ```
+
+For multi-LoRA serving at scale (multiple adapters hot-swapped per request), vLLM on a cloud GPU is the path. But for local experimentation, Ollama with a single merged adapter is simpler and sufficient.
 
 ### Adapter Registry
 
-Maps agent IDs and project contexts to LoRA adapter paths:
+Maps agent IDs and project contexts to skill adapter paths:
 
 ```python
 class AdapterRegistry:
@@ -305,7 +308,17 @@ class AdapterRegistry:
     def list_adapters(self) -> list[AdapterInfo]
 ```
 
-vLLM is started with `--enable-lora` and adapters are specified via the `lora_modules` parameter or loaded dynamically.
+### Local vs. Cloud Strategy
+
+| Task | Local (M4 32GB) | Cloud (GCP spot L4/A100) |
+|------|-----------------|--------------------------|
+| Inference / agent sessions | Ollama + GGUF models | vLLM with multi-LoRA |
+| LoRA training (7B) | Feasible with MLX or Unsloth | Fast on L4 spot (~$0.70/hr) |
+| LoRA training (32B) | Tight but possible with QLoRA + MLX | Needs A100 40GB |
+| Synthesis (data gen) | Local 32B model or API (Claude/GPT) | Same |
+| Evaluation runs | Local for small suites | Cloud for full benchmark sweeps |
+
+For rapid iteration, run everything locally. Push to cloud only for full experiment sweeps or 32B QLoRA training if local is too slow.
 
 ---
 
@@ -333,13 +346,13 @@ Wraps around the entire pipeline, providing measurement at every stage.
 └───────────────────────────────────────────────────────────────────┘
 ```
 
-**Retention** — Does the adapter retain knowledge from past sessions? Measured by testing accuracy on held-out pairs from each session, plotted as a retention curve over time.
+**Skill Retention** — Does the adapter retain skills from past sessions? Measured by testing accuracy on held-out pairs from each session, plotted as a retention curve over time.
 
-**Environmental Fluency** — Does the adapter make the agent better? Measured by: fewer steps to task completion, fewer errors/retries, less context consumed for environmental setup, better tool selection. This is the primary metric.
+**Environmental Fluency** — Does the skill layer make the agent better at its job? Measured by: fewer steps to task completion, fewer errors/retries, better first-attempt tool selection, more efficient navigation. This is the primary metric.
 
-**Capability Preservation** — Does the adapter hurt general performance? Measured by standard benchmarks (HumanEval, MBPP, MMLU) before and after adapter application. Acceptable threshold: < 2% degradation.
+**Capability Preservation** — Does the skill layer hurt general performance? Measured by standard benchmarks (HumanEval, MBPP, MMLU) before and after adapter application. Acceptable threshold: < 2% degradation.
 
-**Baselines** — Same evaluation run against: no-memory, RAG-only, context-stuffing. The LoRA approach must outperform at least one of these on at least one important axis.
+**Baselines** — Same evaluation against: no skill layer, knowledge-only (RAG). The skill layer must add measurable value on top of what good knowledge retrieval already provides.
 
 ### Experiment Runner
 
@@ -350,7 +363,8 @@ experiment:
   name: "full_replay_baseline"
   id: "exp_001"
   strategy: "full_replay"
-  base_model: "unsloth/Qwen2.5-Coder-7B-Instruct-bnb-4bit"
+  base_model: "Qwen/Qwen2.5-Coder-7B-Instruct"  # fast iteration model
+  # base_model: "Qwen/Qwen2.5-Coder-32B-Instruct"  # full-scale model
   sessions: 50
   consolidation_interval: 5
   lora:
@@ -360,7 +374,7 @@ experiment:
     retention: true
     fluency: true
     capability: true
-    baselines: ["rag", "context"]
+    baselines: ["rag", "knowledge_only"]
   seeds: [42, 123, 456]  # Multiple runs for significance
 ```
 
@@ -371,7 +385,7 @@ Results are logged to structured JSON and optionally to Weights & Biases.
 ## Directory Structure
 
 ```
-recall/
+looper/
 ├── pyproject.toml
 ├── README.md
 ├── docs/
@@ -379,7 +393,7 @@ recall/
 │   ├── research_landscape.md         # Literature survey
 │   ├── experiments.md                # Experiment definitions
 │   └── architecture.md              # This document
-├── recall/
+├── looper/
 │   ├── __init__.py
 │   ├── models.py                    # Core data models
 │   ├── collectors/
@@ -448,7 +462,7 @@ recall/
 
 ## Integration Points Summary
 
-| Integration Point | OpenClaw Feature | RECALL Component |
+| Integration Point | OpenClaw Feature | Looper Component |
 |-------------------|------------------|-------------------|
 | Session data ingestion | Session JSONL files | Experience Collector (batch) |
 | Real-time collection | Hook system (postToolExecution, postResponse) | OpenClaw Plugin (hook mode) |
