@@ -28,7 +28,7 @@ CACHED_BASE_TRAJ = Path("/Volumes/1TB_SSD/looper/results/phase1/trajectories/bas
 CACHED_ADAPTER = Path("/Volumes/1TB_SSD/looper/results/phase1/adapter")
 HF_MODEL = "mlx-community/Qwen2.5-Coder-7B-Instruct-4bit"
 MLX_PORT = 8080
-MAX_STEPS = 15
+MAX_STEPS = 10  # Reduced from 15 to avoid MLX OOM at step ~11
 
 # --- Logging ---
 LOG_FILE = OUTPUT_DIR / "condition3_resume.log"
@@ -154,7 +154,7 @@ def main():
                     model=HF_MODEL,
                     base_url=mlx_base_url,
                     max_steps=MAX_STEPS,
-                    max_tokens=4096,
+                    max_tokens=512,  # Reduced from 4096 to limit context growth
                     chat_fn=openai_chat,
                 )
                 save_trajectory(traj, traj_dir)

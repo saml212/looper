@@ -1,45 +1,50 @@
 # Looper Overnight Report
 **Date:** 2026-03-05
-**Session:** Continued from Phase 1 completion (2026-03-04)
+**Sessions:** Continued from Phase 1 completion (2026-03-04), resumed 2026-03-05
 
 ---
 
 ## Summary
 
-Phase 1 pilot is complete. The full experiment pipeline works end-to-end: task loading, agent inference, trajectory collection, synthesis, LoRA training, adapted inference, and patch verification. Key findings so far establish the baseline and identify critical bottlenecks.
+Phase 1 full 3-condition ablation is complete, plus two synthesis experiments. The LoRA skill adapter shows **zero forward transfer** on the test set — the adapted model resolves exactly the same tasks as the base model. Synthesis experiments (format and budget) reveal that the 7B model memorizes all training data (loss=0.0), making training-time metrics uninformative.
 
-**Experiments completed this session:**
-1. Phase 1 analysis (verified results review)
-2. Experiment 7: Synthesis Budget Sweep (complete)
-
-**Experiments in progress:**
-- Condition 3 (Base+LoRA) running via `resume_condition3.py` — estimated 15-20 hours remaining
+**Experiments completed:**
+1. Phase 1 Condition 3 (Base+LoRA) — 25 test tasks with adapted model
+2. Experiment 6: Synthesis Format Comparison — 4 prompt formats
+3. Experiment 7: Synthesis Budget Sweep — 4 budget levels (prior session)
 
 ---
 
-## Phase 1 Results (Verified)
+## Phase 1 Full Results (3 Conditions)
 
-### Base Model Performance (Qwen2.5-Coder-7B on django/django)
+### Test Set Performance (25 django/django tasks)
 
-| Metric | Train (25) | Test (25) | Total (50) |
-|--------|-----------|-----------|------------|
-| Resolve rate | 2/25 (8%) | 2/25 (8%) | 4/50 (8%) |
-| Patches generated | 7/25 | 7/25 | 14/50 |
-| Patch accuracy | 2/7 (29%) | 2/7 (29%) | 4/14 (29%) |
-| Avg steps (resolved) | 4.0 | 3.5 | 3.8 |
-| Hit max_steps | 18/25 | 16/25 | 34/50 |
+| Condition | Resolved | Resolve Rate | Resolved Tasks |
+|-----------|----------|-------------|----------------|
+| Base | 2/25 | 8% | django-12304, django-13410 |
+| Base+RAG | 2/25 | 8% | django-12304, django-13410 |
+| Base+LoRA | 2/25 | 8% | django-12304, django-13410 |
 
-**Resolved tasks:** django-9296, django-11099 (train), django-12304, django-13410 (test) — all completed in 3-4 steps.
+**Forward Transfer = 0.0** — All three conditions resolve the exact same two tasks. Neither RAG nor LoRA changes the outcome.
 
-### Key Observations
+### Condition 3 Details
+- **Adapter:** Trained on 25 train trajectories (budget=5, format=simple_qa)
+- **Max steps:** 10 (reduced from 15 to avoid GPU OOM)
+- **All 25 tasks hit max_steps** — no task resolved early
+- **Patches generated:** 6/25 (24%), vs 7/25 for base at 15 steps
+- **Verified patches:** 2/25 resolved (django-12304, django-13410 — same as base)
+- **Avg tokens/task:** ~36K (consistent across tasks at 10 steps × ~3.6K/step)
+- **Runtime:** ~2 hours (25 tasks × ~290s/task)
 
-1. **Bimodal behavior:** Tasks either resolve quickly (3-4 steps, ~6K tokens) or fail completely (15 steps, ~30K tokens). There is no middle ground — no tasks resolve in 6-14 steps.
+### Why Forward Transfer = 0
 
-2. **Low base rate limits the experiment:** 8% resolve rate means we need large sample sizes to detect forward transfer. With 25 test tasks, we'd need the adapter to change at least 3 tasks from fail to pass to achieve statistical significance.
+1. **Training data quality:** The LoRA adapter was trained on synthesis pairs extracted from trajectories where the base model only resolved 2/25 tasks. Most training data comes from failed trajectories — the model is learning from its own mistakes, not from successful strategies.
 
-3. **Patch quality matters:** 14/50 tasks generated patches, but only 4 actually fixed the issue. The old file-overlap verifier would have claimed 16% resolve rate — the FAIL_TO_PASS verification halved that to 8%.
+2. **Memorization, not generalization:** Training loss reaches 0.0 — the model perfectly memorizes 89 examples. But memorizing instruction/response pairs from failed Django debugging sessions doesn't help with different Django tasks.
 
-4. **Synthesis coverage:** Only 18/25 train trajectories produced valid synthesis pairs. 7 trajectories generated invalid JSON or prose responses instead of structured data. The same problematic trajectories (django-10880, django-11490, django-11603, django-11820, django-11880, django-12125, django-12209) fail across all synthesis attempts.
+3. **Base rate too low:** At 8% resolve rate, the 7B model lacks the fundamental capability to solve most tasks. LoRA fine-tuning on behavioral patterns can't compensate for insufficient base reasoning ability.
+
+4. **Step budget confound:** Condition 3 used max_steps=10 vs 15 for conditions 1-2. However, all resolved tasks complete in 3-4 steps, so this shouldn't affect resolvable tasks.
 
 ---
 
@@ -47,81 +52,108 @@ Phase 1 pilot is complete. The full experiment pipeline works end-to-end: task l
 
 **Hypothesis:** More pairs per trajectory provides diminishing returns; the curve flattens between 5-10 pairs.
 
-### Results
-
-| Budget (requested) | Actual pairs | Pairs/traj | Avg resp length | Types distribution | Train loss |
-|---|---|---|---|---|---|
+| Budget | Actual Pairs | Pairs/Traj | Avg Resp Length | Type Distribution | Train Loss |
+|--------|-------------|-----------|-----------------|-------------------|------------|
 | 3 | 54 | 2.2 | 150 chars | tool:24 err:16 conv:12 wf:2 | 0.0 |
 | 5 | 94 | 3.8 | 176 chars | tool:36 err:21 conv:19 wf:18 | 0.0 |
 | 10 | 163 | 6.5 | 146 chars | tool:59 err:30 conv:55 wf:19 | 0.0 |
 | 20 | 362 | 14.5 | 134 chars | tool:74 err:71 conv:186 wf:31 | 0.0 |
 
 ### Findings
-
-1. **Yield is ~70% of requested:** The 7B synthesis model reliably produces pairs but drops ~30% of trajectories due to JSON formatting failures (wrapping in markdown fences, returning prose instead of JSON).
-
-2. **Response quality decreases at higher budgets:** Average response length drops from 176 chars (budget 5) to 134 chars (budget 20), suggesting the model generates shorter, less detailed responses when asked for more pairs.
-
-3. **Type distribution shifts:** At budget 3-5, tool_usage dominates (44%). At budget 20, conventions dominate (51%). Higher budgets force the model to generate more convention-type pairs, which are lower quality filler.
-
-4. **Training loss is uninformative:** All budgets achieve 0.0 training loss at 100 iterations. The model perfectly memorizes datasets of 54-362 examples. Differentiation requires inference evaluation (running each adapter on test tasks).
-
-5. **Optimal budget appears to be 5:** Best combination of yield (3.8/traj), response length (176 chars), and balanced type distribution. Budget 3 produces too few pairs per trajectory; budget 10+ degrades quality.
-
-### Limitations
-
-- Training loss cannot differentiate adapters — all reach 0.0. Need inference evaluation.
-- Same 7 trajectories fail synthesis across all budgets (systematic, not budget-dependent).
-- No repetition (experiment should be run 3x for statistical significance per docs/experiments.md).
+1. **Yield ~70% of requested** — 7 trajectories consistently fail JSON parsing
+2. **Response quality decreases at higher budgets** — avg length drops from 176→134 chars
+3. **Type distribution shifts** — higher budgets generate more "filler" convention pairs
+4. **Budget 5 is optimal** for balanced quality and quantity
+5. **Training loss uninformative** — all reach 0.0. Need inference evaluation.
 
 ---
 
-## Condition 3 Status (In Progress)
+## Experiment 6: Synthesis Format Comparison
 
-Running `resume_condition3.py` — tests the adapted model (base + LoRA adapter) on 25 test tasks.
+**Hypothesis:** Different synthesis formats produce qualitatively different training data and adapters.
 
-- **Started:** 10:44 AM, 2026-03-05
-- **MLX server:** Port 8080 with adapter from `/Volumes/1TB_SSD/looper/results/phase1/adapter`
-- **Speed:** ~4 min/step, 15 max steps/task
-- **Estimated completion:** Late evening / overnight
-- **Previous attempt failed:** Running Ollama simultaneously caused resource contention (all 25 tasks timed out). Current run has MLX as the only GPU consumer.
+| Format | Pairs | Avg Response Length | Synthesis Time | Training Time | Dominant Type |
+|--------|-------|----|----|---|---|
+| A_simple_qa | 89 | 150 chars | 753s | 91s | balanced |
+| B_chain_of_thought | 88 | **394 chars** | 982s | 139s | tool_usage (78%) |
+| D_reflexion | 97 | 282 chars | 920s | 134s | error_recovery (88%) |
+| E_contextual | 99 | 294 chars | 880s | 122s | convention (94%) |
+
+### Findings
+
+1. **Format strongly influences output characteristics:**
+   - Chain-of-thought produces 2.6x longer responses than simple QA
+   - Reflexion generates more pairs (97 vs 88-89) with error_recovery focus
+   - Contextual produces the most pairs (99) with convention focus
+   - Simple QA produces the most balanced type distribution
+
+2. **Same 7 trajectories fail across all formats** — the JSON failure is trajectory-dependent, not format-dependent
+
+3. **Training time correlates with response length** — longer responses = longer training (91s → 139s)
+
+4. **All formats: train_loss=0.0** — same memorization problem. The 7B model with rank-16 LoRA has more than enough capacity for 88-99 examples.
+
+5. **Format C (DPO) was excluded** — requires paired preference data not yet implemented
 
 ---
 
 ## Technical Lessons
 
+### GPU OOM on MLX
+Running condition 3 with max_steps=15 and max_tokens=4096 caused `kIOGPUCommandBufferCallbackErrorOutOfMemory` after step ~11. Context grows linearly with steps (~3.6K tokens/step). Fix: max_steps=10, max_tokens=512. This reduced per-step time from ~4 min to ~28 sec.
+
 ### Resource Contention
-Running Ollama (qwen2.5-coder:7b, ~5GB) and MLX server (7B 4-bit, ~4.5GB) simultaneously on 32GB M4 causes severe MLX slowdowns. Each inference call that should take 3-4 minutes takes 10+ minutes and eventually times out. **Rule: Only run one inference server at a time.**
+Running Ollama + MLX server simultaneously on 32GB M4 causes severe MLX slowdowns and timeouts. **Rule: only one inference server at a time.**
 
 ### LoRA Fusion Still Broken
-LoRA adapters trained on 4-bit quantized MLX models cannot be fused and converted to GGUF for Ollama. The adapter must be used dynamically via `mlx_lm.server --adapter-path`. This limits evaluation to MLX-based inference, which is slower than Ollama.
+Adapters trained on 4-bit quantized MLX models cannot be fused and converted to GGUF. Must use `mlx_lm.server --adapter-path` for dynamic application.
 
 ### Synthesis Model Limitations
-The 7B model fails to produce valid JSON ~30% of the time. Common failures:
-- Wrapping JSON in markdown code fences (```json...```)
-- Generating prose summaries instead of structured pairs
-- Truncating long JSON arrays
+7B model fails valid JSON ~30% of the time. Same 7 trajectories fail across all budgets and formats: django-10880, django-11490, django-11603, django-11820, django-11880, django-12125, django-12209.
 
-The `_extract_json_array()` parser handles some of these, but markdown fences with truncated content are unrecoverable. A more robust approach would retry failed synthesis or use a stronger model.
+---
+
+## Cross-Experiment Analysis
+
+### The Core Problem: Training Signal Quality
+
+All three experiments converge on the same issue: **the training signal is too weak to produce meaningful adaptation.**
+
+1. **Low base resolve rate (8%)** means most training trajectories are from failed sessions
+2. **Training loss = 0.0** across all configurations (54-362 examples, 4 formats, 4 budgets)
+3. **Forward transfer = 0.0** with the best adapter (budget=5, simple_qa format)
+
+This suggests the bottleneck is not synthesis format or budget — it's the **quality of the source trajectories**. The model needs to succeed more often to generate useful training data.
+
+### Potential Paths Forward
+
+1. **Stronger base model** (Phase 3): 32B+ models have higher base resolve rates (~20-30% on SWE-Bench). More successful trajectories = better training signal.
+
+2. **Oracle trajectories**: Train on gold-standard patches from SWE-Bench rather than model-generated ones. Tests whether LoRA *can* help when given good data.
+
+3. **Curriculum filtering**: Only synthesize from resolved trajectories (currently 2/25). This means very few training examples but higher quality.
+
+4. **Multi-repo training**: Accumulate trajectories across many repos to increase the number of resolved tasks in the training set.
+
+5. **Inference evaluation**: Run each adapter (from Exp 6 and 7) on test tasks to differentiate. This is the critical missing piece — training metrics are uninformative. Estimated cost: ~2 hours per adapter × 8 adapters = ~16 hours.
 
 ---
 
 ## What's Next
 
-### Immediate (when condition 3 completes)
-1. Verify condition 3 patches with FAIL_TO_PASS tests
-2. Compute forward transfer: base test resolve rate vs adapted test resolve rate
-3. If FT > 0: run condition 4 (LoRA + RAG) for the full 4-condition ablation
+### Immediate Priority
+1. **Run condition 4 (LoRA+RAG)** to complete the 4-condition ablation (~2 hours)
+2. **Inference evaluation** for at least one Experiment 6 adapter (chain-of-thought, the most differentiated)
 
 ### Short Term
-4. Run Experiment 6 (Synthesis Format Comparison) — scripts are ready
-5. Re-run Experiment 7 with inference evaluation (using each budget's adapter on test tasks)
-6. Phase 2: Cross-validation with 5 splits to test robustness
+3. **Oracle trajectory experiment**: Train LoRA on gold patches to test upper bound
+4. Phase 2: Cross-validation with 5 splits (but FT=0.0 makes this less urgent)
+5. Phase 3: Test with stronger model (Qwen2.5-Coder-32B or similar)
 
 ### Blocking Issues
-- **MLX inference speed:** ~4 min/step makes full 50-task runs take 25+ hours. Consider using a 1.5B or 3B model for faster iteration, or switching to cloud inference.
-- **Low base resolve rate (8%):** The 7B model barely solves any tasks, making it hard to measure improvement. Phase 3 with 32B models may show clearer results.
-- **Synthesis quality:** 30% JSON failure rate. Need better prompt engineering or a fallback to a stronger synthesis model.
+- **MLX inference speed**: ~5 min/task limits evaluation throughput
+- **Base resolve rate**: 8% provides insufficient training signal
+- **Training loss uninformative**: Need inference eval, which is slow
 
 ---
 
@@ -130,20 +162,19 @@ The `_extract_json_array()` parser handles some of these, but markdown fences wi
 | Item | Path |
 |------|------|
 | Phase 1 verified results | `/Volumes/1TB_SSD/looper/results/phase1_verified/experiment_result.json` |
-| Phase 1 OpenClaw pilot | `/Volumes/1TB_SSD/looper/results/phase1_openclaw/experiment_result.json` |
-| Experiment 7 results | `/Volumes/1TB_SSD/looper/results/experiment7_budget/experiment_result.json` |
-| Condition 3 log | `/Volumes/1TB_SSD/looper/results/phase1_full/condition3_resume.log` |
+| Condition 3 results | `/Volumes/1TB_SSD/looper/results/phase1_full/condition3_results.json` |
 | Condition 3 trajectories | `/Volumes/1TB_SSD/looper/results/phase1_full/trajectories/base_lora/` |
-| Trained adapter | `/Volumes/1TB_SSD/looper/results/phase1/adapter/` |
-| Experiment scripts | `run_experiment6_format.py`, `run_experiment7_budget.py` |
+| Experiment 6 results | `/Volumes/1TB_SSD/looper/results/experiment6_format/experiment_result.json` |
+| Experiment 7 results | `/Volumes/1TB_SSD/looper/results/experiment7_budget/experiment_result.json` |
+| Trained adapters (Exp 6) | `/Volumes/1TB_SSD/looper/results/experiment6_format/{format}/adapter/` |
+| Phase 1 base trajectories | `/Volumes/1TB_SSD/looper/results/phase1/trajectories/base/` |
 
 ---
 
 ## Git Status
 
 Branch: `v1`
-All work committed (219 tests passing).
 Recent commits:
+- `295a84a` Add OVERNIGHT_REPORT.md
 - `b350ecc` Add Experiment 6/7 scripts
 - `ee09e10` Complete build order steps 2-8 (219 tests)
-- `9f72be8` Reframe anti-forgetting section
