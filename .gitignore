@@ -40,6 +40,9 @@ wandb/
 # Notebooks
 .ipynb_checkpoints/
 
+# SSD storage symlink
+data_store
+
 # Secrets
 .env
 .env.*

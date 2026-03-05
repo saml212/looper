@@ -1,0 +1,118 @@
+{
+  "metadata": {
+    "name": "SWE-Bench-CL-Mini",
+    "total_tasks": 4
+  },
+  "sequences": [
+    {
+      "id": "seq-fakerepo",
+      "repo": "fake/repo",
+      "num_tasks": 4,
+      "tasks": [
+        {
+          "metadata": {
+            "instance_id": "fake__repo-100",
+            "repo": "fake/repo",
+            "base_commit": "aaa111",
+            "created_at": "2020-01-01T00:00:00+00:00",
+            "difficulty": "<15 min fix"
+          },
+          "task": {
+            "problem_statement": "Add __iter__ to Paginator",
+            "hints_text": "Some hint"
+          },
+          "evaluation": {
+            "patch": "diff --git a/file.py b/file.py\n--- a/file.py\n+++ b/file.py\n@@ -1 +1,2 @@\n+pass\n",
+            "test_patch": "diff --git a/tests/test.py b/tests/test.py\n--- a/tests/test.py\n+++ b/tests/test.py\n@@ -1 +1,2 @@\n+pass\n",
+            "FAIL_TO_PASS": ["tests.test::Test::test_iter"],
+            "PASS_TO_PASS": ["tests.test::Test::test_other"]
+          },
+          "continual_learning": {
+            "sequence_position": 1,
+            "difficulty_score": 1.0,
+            "potential_dependencies": [],
+            "modified_files": ["file.py"]
+          }
+        },
+        {
+          "metadata": {
+            "instance_id": "fake__repo-200",
+            "repo": "fake/repo",
+            "base_commit": "bbb222",
+            "created_at": "2020-02-01T00:00:00+00:00",
+            "difficulty": "<15 min fix"
+          },
+          "task": {
+            "problem_statement": "Fix validation bug",
+            "hints_text": ""
+          },
+          "evaluation": {
+            "patch": "diff fix",
+            "test_patch": "diff test fix",
+            "FAIL_TO_PASS": ["tests.test::Test::test_validate"],
+            "PASS_TO_PASS": []
+          },
+          "continual_learning": {
+            "sequence_position": 2,
+            "difficulty_score": 2.0,
+            "potential_dependencies": ["fake__repo-100"],
+            "modified_files": ["validator.py"]
+          }
+        },
+        {
+          "metadata": {
+            "instance_id": "fake__repo-300",
+            "repo": "fake/repo",
+            "base_commit": "ccc333",
+            "created_at": "2020-03-01T00:00:00+00:00",
+            "difficulty": "15 min - 1 hour"
+          },
+          "task": {
+            "problem_statement": "Refactor cache layer",
+            "hints_text": "Consider LRU"
+          },
+          "evaluation": {
+            "patch": "diff refactor",
+            "test_patch": "diff test refactor",
+            "FAIL_TO_PASS": ["tests.test::Test::test_cache"],
+            "PASS_TO_PASS": []
+          },
+          "continual_learning": {
+            "sequence_position": 3,
+            "difficulty_score": 3.0,
+            "potential_dependencies": [],
+            "modified_files": ["cache.py"]
+          }
+        },
+        {
+          "metadata": {
+            "instance_id": "fake__repo-400",
+            "repo": "fake/repo",
+            "base_commit": "ddd444",
+            "created_at": "2020-04-01T00:00:00+00:00",
+            "difficulty": "1-4 hours"
+          },
+          "task": {
+            "problem_statement": "Add retry mechanism",
+            "hints_text": ""
+          },
+          "evaluation": {
+            "patch": "diff retry",
+            "test_patch": "diff test retry",
+            "FAIL_TO_PASS": ["tests.test::Test::test_retry"],
+            "PASS_TO_PASS": []
+          },
+          "continual_learning": {
+            "sequence_position": 4,
+            "difficulty_score": 4.0,
+            "potential_dependencies": ["fake__repo-200"],
+            "modified_files": ["retry.py"]
+          }
+        }
+      ],
+      "statistics": {
+        "total_tasks": 4
+      }
+    }
+  ]
+}

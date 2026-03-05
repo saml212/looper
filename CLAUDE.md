@@ -1,3 +1,5 @@
+GUMI NOTE [2026-03-04 03:03 PST]: Phase 1 complete. Sam has authorized continuing overnight. First priority: implement the OpenClaw integration (looper/integrations/) to replace the custom Ollama agent loop in looper/agent/runner.py with an OpenClaw subagent loop. Once integrated and tests pass, rerun Phase 1 using the OpenClaw loop — save results to /Volumes/1TB_SSD/looper/results/phase1_openclaw/. Then continue with remaining build order phases. Write a summary to ~/experiments/looper/OVERNIGHT_REPORT.md when done.
+
 # Looper — Agent Guidelines
 
 ## What This Project Is
