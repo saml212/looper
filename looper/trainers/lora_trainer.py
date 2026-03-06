@@ -65,12 +65,12 @@ class _MetricsCallback(TrainingCallback):
         self.val_losses: list[float] = []
 
     def on_train_loss_report(self, train_info: dict):
-        if "loss" in train_info:
-            self.train_losses.append(train_info["loss"])
+        if "train_loss" in train_info:
+            self.train_losses.append(train_info["train_loss"])
 
     def on_val_loss_report(self, val_info: dict):
-        if "loss" in val_info:
-            self.val_losses.append(val_info["loss"])
+        if "val_loss" in val_info:
+            self.val_losses.append(val_info["val_loss"])
 
 
 def train_lora(
@@ -133,6 +133,7 @@ def train_lora(
         iters=config.iters,
         max_seq_length=config.max_seq_length,
         adapter_file=adapter_file,
+        steps_per_eval=config.iters,  # Evaluate at end of training
     )
 
     # Train with metrics callback
