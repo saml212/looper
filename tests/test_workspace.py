@@ -10,6 +10,7 @@ from looper.agent.workspace import (
     cleanup_workspace,
     create_workspace,
     get_patch,
+    reset_workspace,
     run_in_workspace,
 )
 
@@ -124,6 +125,63 @@ class TestCreateWorkspace:
 
         assert ws1 == ws2
         assert ws1.exists()
+
+    def test_resets_dirty_workspace(
+        self, tmp_path: Path, local_bare_repo: tuple[Path, str, str]
+    ):
+        """create_workspace resets uncommitted changes on re-entry."""
+        bare, first_commit, _ = local_bare_repo
+        ws_root = tmp_path / "workspaces"
+        ws_root.mkdir()
+
+        ws = create_workspace(str(bare), first_commit, ws_root)
+
+        # Dirty the workspace
+        (ws / "hello.txt").write_text("MODIFIED\n")
+        (ws / "new_file.txt").write_text("untracked\n")
+        assert get_patch(ws) != ""
+
+        # Re-create should reset
+        ws2 = create_workspace(str(bare), first_commit, ws_root)
+        assert ws2 == ws
+        assert get_patch(ws2) == ""
+        assert (ws2 / "hello.txt").read_text() == "hello world\n"
+        assert not (ws2 / "new_file.txt").exists()
+
+
+class TestResetWorkspace:
+    """Tests for reset_workspace."""
+
+    def test_discards_modifications(
+        self, tmp_path: Path, local_bare_repo: tuple[Path, str, str]
+    ):
+        bare, _, second = local_bare_repo
+        ws_root = tmp_path / "workspaces"
+        ws_root.mkdir()
+        ws = create_workspace(str(bare), second, ws_root)
+
+        (ws / "hello.txt").write_text("MODIFIED\n")
+        assert get_patch(ws) != ""
+
+        reset_workspace(ws)
+        assert get_patch(ws) == ""
+        assert (ws / "hello.txt").read_text() == "hello world\nupdated\n"
+
+    def test_removes_untracked_files(
+        self, tmp_path: Path, local_bare_repo: tuple[Path, str, str]
+    ):
+        bare, _, second = local_bare_repo
+        ws_root = tmp_path / "workspaces"
+        ws_root.mkdir()
+        ws = create_workspace(str(bare), second, ws_root)
+
+        (ws / "junk.txt").write_text("should be removed\n")
+        (ws / "subdir").mkdir()
+        (ws / "subdir" / "deep.txt").write_text("also removed\n")
+
+        reset_workspace(ws)
+        assert not (ws / "junk.txt").exists()
+        assert not (ws / "subdir").exists()
 
 
 class TestGetPatch:

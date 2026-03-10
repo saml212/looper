@@ -9,6 +9,28 @@ import subprocess
 from pathlib import Path
 
 
+def reset_workspace(workspace_dir: Path) -> None:
+    """Reset all uncommitted changes in a workspace.
+
+    Discards modified/deleted tracked files and removes untracked files/dirs.
+    This ensures a clean state at base_commit before each agent run.
+    """
+    subprocess.run(
+        ["git", "checkout", "--", "."],
+        cwd=workspace_dir,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "clean", "-fd"],
+        cwd=workspace_dir,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
 def create_workspace(
     repo: str,
     base_commit: str,
@@ -28,8 +50,8 @@ def create_workspace(
     The workspace directory structure:
         workspace_root / repo_name / base_commit[:8] /  (the cloned repo)
 
-    Idempotent: if the workspace already exists at the right commit, returns
-    the existing path without re-cloning.
+    Idempotent: if the workspace already exists at the right commit,
+    resets uncommitted changes and returns the existing path.
     """
     # Derive repo name: last component of the path, minus any .git suffix
     repo_name = Path(repo).stem.removesuffix(".git") if "/" not in repo or repo.startswith("/") else repo.split("/")[-1]
@@ -47,6 +69,7 @@ def create_workspace(
             text=True,
         )
         if result.returncode == 0 and result.stdout.strip() == base_commit:
+            reset_workspace(workspace_dir)
             return workspace_dir
 
     workspace_dir.mkdir(parents=True, exist_ok=True)
