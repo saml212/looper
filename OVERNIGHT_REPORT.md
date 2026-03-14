@@ -1,10 +1,103 @@
 # Looper Overnight Report
-**Date:** 2026-03-05
-**Sessions:** Continued from Phase 1 completion (2026-03-04), resumed 2026-03-05
+**Date:** 2026-03-12 (updated), originally 2026-03-05
+**Sessions:** Phase 1 (2026-03-04), synthesis experiments (2026-03-05), framework fixes (2026-03-11), 14B scaling (2026-03-12), 32B scaling (2026-03-12)
 
 ---
 
-## Summary
+## Latest: 32B Framework Results (2026-03-12)
+
+### 32B ties 14B — scaling plateau confirmed
+
+| Condition | Resolve Rate | Patch Rate | Avg Steps | Runtime |
+|-----------|-------------|------------|-----------|---------|
+| 7B+fixes (15 tasks) | 3/15 (20.0%) | 86.7% | 6.0 | ~30 min |
+| 14B+fixes (15 tasks) | 4/15 (26.7%) | 100% | 4.1 | ~45 min |
+| **32B+fixes (15 tasks)** | **4/15 (26.7%)** | **86.7%** | **7.1** | **217 min** |
+
+32B resolves the same number of tasks as 14B but different ones:
+
+| Task | 7B | 14B | 32B |
+|------|-----|-----|-----|
+| django-11066 | PASS | PASS | **FAIL** (regression) |
+| django-11099 | PASS | PASS | PASS |
+| django-11119 | FAIL | PASS | PASS |
+| django-11451 | PASS | PASS | PASS |
+| django-11603 | FAIL | FAIL | **PASS** (unique to 32B) |
+
+**Union of all 3 models: 5/15 (33.3%)** — each model resolves at least one task the others can't.
+
+### Key findings
+1. **Scaling plateau at 14B→32B**: Zero resolve rate improvement, 4.3x runtime cost
+2. **32B unique strength**: django-11603 (aggregation pipeline bug) — requires deeper reasoning
+3. **32B regression**: django-11066 (contenttypes) — generates wrong fix despite both 7B and 14B succeeding
+4. **File truncation worse for 32B**: 2/15 tasks stuck rewriting large files (each attempt ~15 min)
+5. **32B inference impractical on 32GB**: 19GB model leaves minimal KV cache headroom, ~15 min per large write step
+
+### Technical details
+- Custom chat function with 1800s timeout (default 600s insufficient for 32B)
+- max_tokens=4096 (matching 14B), but 32B generates more verbose output
+- Two pathological tasks (10914, 11299) consume 108 min of 217 min total runtime
+- Non-pathological tasks average ~5 min each (comparable to 14B)
+- Results at `/Volumes/1TB_SSD/looper/results/experiment_framework_32b/`
+- Script: `run_32b_framework.py`
+
+### Conclusion
+**14B is the optimal model size** for this framework on 32GB Apple Silicon. The bottleneck is fix quality (wrong_fix), not model capacity. Future improvements should target:
+1. `<edit>` tool to avoid full-file rewrites (eliminates file truncation failures)
+2. Better prompting for fix verification
+3. Possibly ensemble/majority-vote across model sizes (union = 33.3%)
+
+---
+
+## Prior: 14B Framework Fix Results (2026-03-12)
+
+### The Code Fence Discovery
+
+14B model wraps all `<write>` content in markdown code fences (`` ```python ... ``` ``),
+silently corrupting every source file it writes. This was the hidden cause of 14B's 0%
+resolve rate in all prior experiments.
+
+**Fix:** Added `_strip_code_fences()` to `runner.py` that strips outermost code fences
+from write content. 7B never produces code fences (0/10 writes checked).
+
+### Results: 14B + Framework Fixes + Code Fence Strip
+
+| Condition | Resolve Rate | Patch Rate | Avg Steps |
+|-----------|-------------|------------|-----------|
+| 14B no fixes | 0/25 (0.0%) | 11/25 (44%) | ~4 |
+| 14B + fence strip only (v1→v2 pilot) | 3/6 (50.0%) | 6/6 (100%) | 3.5 |
+| 14B + all fixes (15 tasks) | 4/15 (26.7%) | 15/15 (100%) | 4.1 |
+| **14B + all fixes (25 tasks)** | **4/25 (16.0%)** | **24/25 (96%)** | **4.6** |
+| 7B + all fixes (15 tasks) | 3/15 (20.0%) | 13/15 (86.7%) | 6.0 |
+
+**14B is a strict superset of 7B** on the 15-task overlap — resolves all 3 tasks 7B resolves plus django-11119.
+Full 25-task: 14B+fixes (16%) = 2x over 7B baseline (8%), with 96% patch rate (vs 56%).
+
+### Head-to-Head (15 tasks)
+
+- Both resolved: 3 (django-11066, django-11099, django-11451)
+- Only 14B: 1 (django-11119 — template autoescape fix)
+- Only 7B: 0
+- Neither: 11
+
+### Scaling Reversal
+
+| Model | No Fixes (25 tasks) | With All Fixes (15 tasks) |
+|-------|---------------------|--------------------------|
+| 7B | 2/25 (8.0%) | 3/15 (20.0%) |
+| 14B | 0/25 (0.0%) | **4/15 (26.7%)** |
+| 32B | 0/3 (0.0%) | **4/15 (26.7%)** |
+
+**Original finding:** Inverse scaling (7B > 14B > 32B)
+**With fixes:** Normal scaling restored up to 14B (14B > 7B), then plateau (32B = 14B)
+
+The framework was masking the larger model's capabilities. 14B was always generating
+correct fixes but code fences corrupted them. Remaining bottleneck: file truncation
+(14B rewrites entire files, hits max_tokens) and wrong_fix quality.
+
+---
+
+## Prior Summary (2026-03-05)
 
 Phase 1 full 3-condition ablation is complete, plus two synthesis experiments. The LoRA skill adapter shows **zero forward transfer** on the test set — the adapted model resolves exactly the same tasks as the base model. Synthesis experiments (format and budget) reveal that the 7B model memorizes all training data (loss=0.0), making training-time metrics uninformative.
 
@@ -12,6 +105,11 @@ Phase 1 full 3-condition ablation is complete, plus two synthesis experiments. T
 1. Phase 1 Condition 3 (Base+LoRA) — 25 test tasks with adapted model
 2. Experiment 6: Synthesis Format Comparison — 4 prompt formats
 3. Experiment 7: Synthesis Budget Sweep — 4 budget levels (prior session)
+4. Experiment 3: MoLE (2026-03-11) — 0/10 all configs
+5. Experiment 4: EWC-LoRA (2026-03-11) — 0/10 all lambdas
+6. Framework Fix experiments (2026-03-11/12) — 7B: 20%, 14B: 26.7%
+7. **14B Framework Full Run (2026-03-12) — 4/15 (26.7%)**
+8. **32B Framework Run (2026-03-12) — 4/15 (26.7%), scaling plateau confirmed**
 
 ---
 

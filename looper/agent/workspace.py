@@ -72,19 +72,24 @@ def create_workspace(
             reset_workspace(workspace_dir)
             return workspace_dir
 
-    workspace_dir.mkdir(parents=True, exist_ok=True)
+    # Remove stale workspace dir if it exists but isn't at the right commit
+    if workspace_dir.exists():
+        shutil.rmtree(workspace_dir)
 
-    # Determine the clone URL
+    # Determine clone source: prefer local bare repo (fast), fallback to GitHub
+    ref_dir = workspace_root / ".refs" / repo_name
     if repo.startswith("/") or repo.startswith(".") or Path(repo).exists():
         clone_url = str(repo)
+    elif ref_dir.exists():
+        # Clone from local bare repo — entirely local, no network needed
+        clone_url = str(ref_dir)
     else:
         clone_url = f"https://github.com/{repo}.git"
 
-    # Use a reference clone if a cached bare repo exists (much faster)
-    ref_dir = workspace_root / ".refs" / repo_name
     clone_cmd = ["git", "clone"]
-    if ref_dir.exists():
-        clone_cmd += ["--reference", str(ref_dir)]
+    # Use --shared for local clones (hardlinks objects, much faster)
+    if not clone_url.startswith("http"):
+        clone_cmd.append("--shared")
     clone_cmd += [clone_url, str(workspace_dir)]
 
     subprocess.run(
