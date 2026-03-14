@@ -2,58 +2,122 @@
 
 ## Philosophy
 
-This project uses **test-driven development** with **sub-agent delegation**. Each coding task is completed by a single sub-agent that:
+Minimal code, test-driven, incremental progress. Every change is small, tested, and documented. Agents use structured workflows with backpressure mechanisms to maintain quality.
 
-1. Writes the test first (TDD)
-2. Implements the minimum code to pass the test
-3. Refactors for simplicity
-4. Documents what it built
+## Agentic Engineering Workflow
 
-The architect agent (main agent) maintains the full project vision and dispatches sub-agents sequentially to preserve context and catch integration issues early.
+Development follows a structured agentic workflow inspired by the [8 Levels of Agentic Engineering](https://www.bassimeledath.com/blog/levels-of-agentic-engineering).
 
-## Current State
+### Core Principles
 
-- **222+ tests passing** across 14 test modules
-- All 8 build order steps complete
-- Framework is production-ready for experiments
-- Experiments ran March 4-14, 2026
+- **Constraints > instructions**: Boundaries (type system, tests, linters, hooks) over step-by-step checklists. Agents fixate on lists and ignore unlisted items.
+- **Backpressure**: Pre-commit hooks, pytest, ruff let agents self-correct without human intervention.
+- **Separation of concerns**: Implementer ≠ reviewer. Research ≠ implementation.
+- **Codify loop**: When you discover something, update the docs — not just the code.
+- **Start → Review → Resume**: Every subagent gets reviewed and sent back to simplify before acceptance.
 
-## Build Order (Complete)
+### Skills (Slash Commands)
 
-| Step | Module | Status |
-|------|--------|--------|
-| 1 | Core data models (`looper/models.py`) | Done |
-| 2 | SWE-Bench-CL task loader (`looper/tasks/`) | Done |
-| 3 | Agent runner (`looper/agent/`) | Done |
-| 4 | Experience collector (`looper/collectors/`) | Done |
-| 5 | Synthetic data generator (`looper/synthesizers/`) | Done |
-| 6 | LoRA trainer (`looper/trainers/`) | Done |
-| 7 | Evaluation framework (`looper/evaluators/`) | Done |
-| 8 | Pipeline orchestrator (`looper/pipeline.py`) | Done |
+| Command | Purpose | Human Input Required? |
+|---------|---------|----------------------|
+| `/spec <topic>` | Load and review relevant docs | No — context loading |
+| `/research <topic>` | Launch research agents, return findings | Yes — human decides |
+| `/implement <task>` | Implement one scoped task with tests | Yes — human reviews |
+| `/review` | Review changes against standards | No — produces report |
+| `/test` | Run tests and summarize results | No — produces report |
+| `/codify <learning>` | Document a discovery | No — updates docs |
 
-Post-build additions:
-- OpenClaw integration (`looper/integrations/`)
-- Patch verification with FAIL_TO_PASS tests (`looper/evaluators/patch_verifier.py`)
-- EWC trainer (`looper/trainers/ewc_trainer.py`)
-- Edit tool with fuzzy matching (`looper/agent/runner.py`)
-- Framework fixes: line-range reads, context pruning, loop detection, code fence stripping
+### The Implement → Codify → Review Loop
+
+```
+1. /spec <topic>          ← Load context
+2. Human decides task     ← Human chooses
+3. /implement <task>      ← Agent implements ONE thing with tests
+   ├── start subagent     ← Scoped task
+   ├── review output      ← Check scope, quality, minimal code
+   ├── resume subagent    ← Refactor, simplify, rerun tests, e2e verify
+   └── codify step        ← Document learnings in docs
+4. /review                ← Separate review of changes
+5. Human approves         ← Human merges or requests changes
+```
+
+### The Start → Review → Resume Protocol
+
+This is the key mechanism for keeping subagent output clean:
+
+**Start**: Give the subagent a scoped task. Be specific about boundaries — what to build, what NOT to touch.
+
+**Review**: When the subagent completes, the orchestrator reviews:
+- Is the code minimal? Could anything be removed?
+- Are tests concise? No redundant setup or assertions?
+- Does it follow existing patterns?
+- Any dead code or unused imports?
+
+**Resume**: Send the subagent back with specific refinement instructions:
+- Reduce total lines of code as much as possible
+- Simplify test structure (use fixtures, remove redundancy)
+- Remove dead code and unused imports
+- Rerun all tests to verify nothing broke
+- Do an end-to-end test: create mock/real input, run through the pipeline, verify output
+- Only then report back as done
+
+**Accept**: The orchestrator does a final check. Only accept when minimal and clean.
+
+### Backpressure Mechanisms
+
+**Pre-commit hook** (`.githooks/pre-commit`):
+- `ruff format --check` — blocks unformatted code
+- `ruff check` — blocks lint errors
+- `pytest` — blocks failing tests
+
+Enabled via: `git config core.hooksPath .githooks`
+
+**Type system**: Pydantic v2 models validate data at runtime. Use typed models for all data structures.
+
+**Tests**: Required alongside all implementation. No code lands without tests.
+
+### Subagent Architecture
+
+- **Research agents**: Read papers, docs, code. Return findings. Never write code.
+- **Implementation agents**: Write code + tests for a specific module. Get reviewed and resumed.
+- **Test agents**: Run tests, diagnose failures, fix issues.
+- **Review agents**: Separate context from implementer. Check scope, tests, minimal code.
+- **Experiment agents**: Run experiments, collect results, report metrics.
+
+**Critical rule**: Orchestrating agents MUST delegate to subagents and preserve their own context for planning, decisions, and progress tracking. This prevents context exhaustion on long-running tasks.
+
+## Code Quality
+
+- **Minimal**: Write the least code that solves the problem.
+- **Simple**: Readable beats elegant. No unnecessary abstractions.
+- **Small PRs**: Each PR does one thing.
+- **No dead code**: No unused imports, commented-out code, or code "for later."
+
+## Testing Strategy
+
+- Every module has tests in `tests/`
+- Tests use fixtures with mock data (no real model calls in unit tests)
+- `pytest` with `--tb=short` for concise output
+- End-to-end smoke tests for pipeline changes
+- All tests should run in < 10 seconds
 
 ## Storage Strategy
 
 - **Code**: `/Users/samuellarson/Experiments/looper/` (git repo)
 - **Large files**: `/Volumes/1TB_SSD/looper/` (models, adapters, datasets, results)
-- **Reference repos**: `/Volumes/1TB_SSD/looper/cache/workspaces/.refs/` (bare clones for fast workspace creation)
+- **Reference repos**: `/Volumes/1TB_SSD/looper/cache/workspaces/.refs/`
 
-## Testing Strategy
+## Commit Practices
 
-- Every module has a corresponding test file in `tests/`
-- Tests use fixtures with mock data (no real model calls in unit tests)
-- `pytest` with coverage reporting
-- All tests run in < 6 seconds
+- Descriptive messages that explain WHY, not just WHAT
+- One logical change per commit
+- Don't commit generated files, model weights, or secrets
+- Normal commit messages — no AI attribution
 
-## Quality Gates
+## Decision Log
 
-Before moving to the next step:
-1. All tests pass (`pytest`)
-2. Code is simple enough that a human can read it in one pass
-3. No dead code or unused imports
+Decisions documented in relevant docs with:
+- What was decided
+- Alternatives considered
+- Why this option was chosen
+- Links to experiment results or research

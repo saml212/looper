@@ -1,0 +1,27 @@
+#!/bin/sh
+# Looper pre-commit hook — backpressure for agents and humans
+set -e
+
+echo "Running pre-commit checks..."
+
+if git diff --cached --name-only | grep -q '\.py$'; then
+    echo "  Checking formatting (ruff)..."
+    python -m ruff format --check looper/ tests/ 2>/dev/null || {
+        echo "BLOCKED: Code not formatted. Run 'ruff format looper/ tests/' first."
+        exit 1
+    }
+
+    echo "  Linting (ruff)..."
+    python -m ruff check looper/ tests/ 2>/dev/null || {
+        echo "BLOCKED: Lint errors found. Run 'ruff check --fix looper/ tests/' first."
+        exit 1
+    }
+
+    echo "  Running tests..."
+    python -m pytest tests/ -q --tb=short 2>/dev/null || {
+        echo "BLOCKED: Tests failing. Fix them before committing."
+        exit 1
+    }
+fi
+
+echo "Pre-commit checks passed."
