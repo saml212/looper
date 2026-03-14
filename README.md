@@ -1,98 +1,99 @@
 # Looper
 
-An experimental research framework for adding a skill layer to AI agents — turning old context into learned environmental fluency through periodic LoRA consolidation.
+An experimental research framework for adding a skill layer to AI agents — testing whether periodic LoRA consolidation of agent experience produces measurably more capable coding agents.
+
+## Result
+
+**LoRA skill consolidation does not work at current model scales.** After 8 experiments over 10 days (March 4-14, 2026), every LoRA training strategy produced zero or negative forward transfer. The adapted model was always the same or worse than the base model.
+
+What *did* work was systematic improvements to the agent framework itself: prompt engineering, tool design, and loop detection tripled the resolve rate from 8% to 27%.
+
+See [LEARNINGS.md](LEARNINGS.md) for the full story.
 
 ## The Idea
 
-Agents today have access to unlimited knowledge but develop zero skills. Everything the industry builds for agent memory — RAG, long context, memory files — operates on the knowledge axis. Nobody is building the skill axis: a system where the agent actually gets better at operating in its environment the longer it works there.
+Agents today have access to unlimited knowledge but develop zero skills. Everything built for agent memory — RAG, long context, memory files — operates on the knowledge axis. Nobody is building the skill axis: a system where the agent actually gets better at operating in its environment the longer it works there.
 
-**Looper adds a new layer to the agent stack.** As an agent operates — using tools, navigating code, deploying, debugging — its experience is periodically consolidated into a LoRA adapter. Old context gets turned into trained skills. The agent doesn't just have better notes; it develops the kind of environmental fluency that a human employee builds over weeks on the job.
+Looper tests whether a LoRA adapter trained on agent experience — the skill layer — adds measurable value on top of the knowledge layer.
 
 ```
-┌─────────────────────────┐
-│     Context Window      │  ← What's happening right now
-├─────────────────────────┤
-│  Memory / Retrieval     │  ← Knowledge from past sessions
-├─────────────────────────┤
-│     Skill Adapter       │  ← Learned environmental fluency (LoRA)
-├─────────────────────────┤
-│     Base Model          │  ← General intelligence
-└─────────────────────────┘
+Context Window    -> What's happening right now
+Memory/Retrieval  -> Knowledge from past sessions
+Skill Adapter     -> Learned environmental fluency (LoRA)   <-- this layer
+Base Model        -> General intelligence
 ```
 
-This doesn't replace anything. Context still handles the present. Retrieval still handles knowledge. The base model still provides general intelligence. The skill adapter adds something new: the ability to get better over time.
+## What We Found
 
-## What This Framework Does
+### LoRA experiments (all negative)
 
-Looper provides tooling to rigorously test whether skill consolidation actually works:
+| Experiment | Forward Transfer | What Happened |
+|-----------|-----------------|---------------|
+| Phase 1: trajectory synthesis | 0.0 | Training data was garbage Q&A from failed trajectories |
+| Oracle SFT (gold patches) | -0.08 | Adapter learned diffs, agent needs tool calls — format mismatch |
+| Correct-format trajectories | negative | Overfitting on 18 examples, hallucination on large files |
+| Trajectory collection (65 examples) | negative | Learned "finish quickly" pattern, not debugging skill |
+| MoLE (mixture of experts) | -0.10 | Merged experts identical to single adapter |
+| EWC-LoRA (elastic weight consolidation) | -0.10 | Nothing worth remembering — data quality bottleneck |
 
-1. **Experience Collection** — Parses [OpenClaw](https://openclaw.ai/) agent session transcripts into structured trajectories
-2. **Synthetic Data Generation** — Extracts environmental skills from trajectories using multiple synthesis strategies (5 formats to compare)
-3. **Continual LoRA Training** — Model-agnostic training with 5 pluggable anti-forgetting strategies
-4. **Evaluation Framework** — Measures environmental fluency, skill retention, general capability preservation
-5. **Experiment Runner** — Config-driven orchestration for 10 pre-registered experiments
+### Framework fixes (all positive)
 
-## The Experiments
+| Fix | Impact |
+|-----|--------|
+| Few-shot example in system prompt | Eliminated aimless exploration |
+| Line-range reads (`<read>file:100-200</read>`) | Prevented context saturation |
+| Context pruning | Kept conversation under token budget |
+| Loop detection | Stopped re-reading same file 13+ times |
+| Skip-verification prompt rule | Eliminated pip-install loops |
+| Code fence stripping | Fixed 14B's 0% resolve rate (was 0%, became 27%) |
+| `<edit>` tool with fuzzy matching | Targeted fixes without file truncation |
 
-| # | Experiment | Question |
-|---|-----------|----------|
-| 1 | Full Replay Baseline | What's the upper bound on skill retention? |
-| 2 | Partial Replay | Can a fixed buffer achieve 80%+ of full replay? |
-| 3 | Mixture of LoRA Experts | Does separating skill types reduce forgetting? |
-| 4 | EWC-LoRA | Does Fisher information penalty help in LoRA's low-rank space? |
-| 5 | Adaptive Rank | Does dynamic rank allocation + SVD consolidation beat fixed rank? |
-| 6 | Synthesis Format | Which data format best captures environmental skills? |
-| 7 | Synthesis Budget | How many training pairs per session trajectory? |
-| 8 | Self-Synthesis | Can the agent generate its own training data? |
-| 9 | Skill + Knowledge Ablation | Does the skill layer add value on top of good retrieval? |
-| 10 | Staleness | How do learned skills degrade when the environment changes? |
+### Model scaling
 
-See [docs/experiments.md](docs/experiments.md) for full hypotheses, methodology, and success criteria.
+| Model | Resolve Rate (with fixes) | Optimal? |
+|-------|--------------------------|----------|
+| 7B | 3/15 (20%) | Fast iteration |
+| 14B | 4/15 (27%) | Best tradeoff |
+| 32B | 4/15 (27%) | 5x slower, same result |
+
+## Why LoRA Failed
+
+Three compounding reasons:
+
+1. **Not enough data.** The 7B base model resolves 8% of tasks. You can't bootstrap skill from a 92% failure rate. The minimum viable training set appears to be 100+ unique resolved tasks.
+
+2. **Format mismatch.** Training data (Q&A pairs, diffs) never matched the inference format (multi-turn XML tool calls). Even gold-standard patches in diff format produced negative transfer because the agent needs `<bash>`, `<read>`, `<write>` — not diffs.
+
+3. **Overfitting.** When we finally got format-matched data (18 correct-format examples), the model memorized the surface pattern (grep -> read -> write -> done in 4 steps) instead of learning generalizable debugging strategies.
+
+The core thesis — that LoRA can encode useful agent skills — remains untested. We never had enough data in the right format to give it a fair shot.
 
 ## Documentation
 
-- [The Problem](docs/problem.md) — Why agents don't learn skills, and what a skill layer would look like
-- [Research Landscape](docs/research_landscape.md) — Survey of LoRA, catastrophic forgetting, agent memory, and related work
-- [Experiments](docs/experiments.md) — All 10 experiments with pre-registered hypotheses
-- [Architecture](docs/architecture.md) — Framework components, data flow, OpenClaw integration
+- [LEARNINGS.md](LEARNINGS.md) — All results and findings
+- [DEEP_AUDIT.md](DEEP_AUDIT.md) — Root cause analysis of FT=0
+- [The Problem](docs/problem.md) — Why agents don't learn skills
+- [Experiments](docs/experiments.md) — 10 pre-registered experiments with results
+- [Architecture](docs/architecture.md) — Framework components and data flow
+- [Research Landscape](docs/research_landscape.md) — Literature survey
+- [Future Work](docs/future-work.md) — Where to go from here
 
-## Status
+## Technical Stack
 
-**Phase: Foundation** — Documentation and core data models.
+- **Python 3.11**, Pydantic v2, 222+ tests passing
+- **LoRA training:** MLX on Apple Silicon (M4 32GB)
+- **Inference:** Ollama (7B/14B/32B), MLX in-process (adapted models)
+- **Benchmark:** SWE-Bench-CL (273 tasks, 8 Python repos)
+- **Agent protocol:** XML tool tags (`<bash>`, `<read>`, `<write>`, `<edit>`, `<done>`)
 
 ## Quick Start
 
 ```bash
+python -m venv .venv --python=python3.11
+source .venv/bin/activate
 pip install -e ".[dev]"
 pytest tests/
 ```
-
-## Project Structure
-
-```
-looper/
-├── docs/                  # Research documentation
-├── looper/
-│   ├── models.py          # Core data models
-│   ├── collectors/        # OpenClaw session parsing
-│   ├── synthesizers/      # Trajectory → training data
-│   ├── trainers/          # LoRA training strategies
-│   ├── evaluators/        # Measurement framework
-│   ├── experiments/       # Experiment orchestration
-│   ├── serving/           # vLLM multi-LoRA serving
-│   └── integrations/      # OpenClaw skill + plugin
-├── tests/                 # Test suite
-├── configs/               # Training and experiment configs
-└── notebooks/             # Analysis and visualization
-```
-
-## Key Papers
-
-- [LoRA](https://arxiv.org/abs/2106.09685) (Hu et al., 2021) — The foundation
-- [LoRA Learns Less and Forgets Less](https://arxiv.org/abs/2405.09673) (Biderman et al., 2024) — The fundamental tradeoff
-- [S-LoRA](https://arxiv.org/abs/2311.03285) (Sheng et al., 2024) — Multi-tenant serving
-- [EWC](https://arxiv.org/abs/1612.00796) (Kirkpatrick et al., 2017) — Classic anti-forgetting
-- [Reflexion](https://arxiv.org/abs/2303.11366) (Shinn et al., 2023) — Context-based agent memory (baseline)
 
 ## License
 

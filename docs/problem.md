@@ -106,3 +106,23 @@ Specifically:
 - And critically: does the skill adapter add measurable value on top of what good memory/retrieval already provides?
 
 If the answer to the last question is no — if good knowledge retrieval alone accounts for all the gains — then the skill layer doesn't justify its complexity. That's a legitimate finding. The goal is truth, not confirmation.
+
+---
+
+## What We Found (March 2026)
+
+After 8 experiments over 10 days, the answer so far is **no** — LoRA skill consolidation does not work at current model scales (7B-32B) with available training data (12-31 resolved tasks).
+
+Every LoRA training strategy produced zero or negative forward transfer. The adapted model was always the same or worse than the base model. Three compounding reasons:
+
+1. **Cold-start problem.** The 7B base model resolves only 8% of SWE-Bench tasks. You can't bootstrap skill from a 92% failure rate. The minimum viable training set appears to be 100+ unique resolved tasks with diverse strategies.
+
+2. **Format mismatch.** LoRA faithfully learns whatever format you train on. Q&A pairs produce a Q&A model. Diffs produce a diff model. Neither produces an agent that uses XML tool calls. Training data must exactly match the inference format.
+
+3. **Overfitting at small scale.** When we finally got format-matched data (18 correct-format examples), the model memorized the surface pattern (grep -> read -> write -> done in 4 steps) instead of learning generalizable debugging strategies.
+
+What *did* work was improving the agent framework itself: prompt engineering (few-shot examples, skip-verification rule), tool design (line-range reads, edit tool, code fence stripping), and loop detection. These changes tripled the resolve rate from 8% to 27%.
+
+The framework fixes are, in a sense, the "skill layer" — they just live in the system prompt instead of the LoRA weights. This raises a deeper question: is the distinction between skills-in-weights and skills-in-prompt meaningful? Or is the system prompt simply the more effective encoding for agent behavioral patterns?
+
+See [LEARNINGS.md](../LEARNINGS.md) for the full results.

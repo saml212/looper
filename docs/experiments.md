@@ -521,42 +521,49 @@ Experiments are ordered by phase and dependency:
 
 ---
 
-## Target Models
+## Results Summary (March 2026)
 
-Experiments run on an M4 Mac Mini with 32GB unified memory. Four models chosen for different experimental roles:
+The following experiments were run. All produced zero or negative forward transfer.
 
-| Model | Size | Role in Experiments |
-|-------|------|---------------------|
-| **Qwen 2.5 Coder 32B** (Q4_K_M) | ~18GB | Primary skill training target — strongest open coding model |
-| **DeepSeek-R1-Distill-Qwen 32B** (Q4_K_M) | ~18GB | Reasoning/debugging skill experiments |
-| **Command R 35B** (Q4_K_M) | ~20GB | Tool-calling skill experiments — built for RAG and tool use |
-| **Qwen 2.5 Coder 7B** (FP16) | ~14GB | Fast iteration, smoke tests, rapid prototyping |
+| # | Experiment | Status | FT | Key Finding |
+|---|-----------|--------|-----|-------------|
+| 1 | Full Replay (7B) | DONE | 0.0 | Workspace contamination bug + garbage training data |
+| 3 | MoLE (4 configs, 7B) | DONE | -0.10 | Merged experts identical to single adapter |
+| 4 | EWC-LoRA (3 lambdas, 7B) | DONE | -0.10 | EWC provides no benefit; bottleneck is data quality |
+| 5 | Adaptive Rank | SKIPPED | — | Same data quality bottleneck as 3/4 |
+| 6 | Synthesis Format (4 formats) | DONE | uninformative | All formats train_loss=0.0 (logging bug); inference eval showed no differentiation |
+| 7 | Synthesis Budget (4 levels) | DONE | uninformative | Budget 5 optimal for quality/quantity; same memorization problem |
+| 8 | Self-Synthesis | SKIPPED | — | Cold-start problem: 8% resolve rate insufficient |
+| 9 | Skill+Knowledge Ablation | DONE (Phase 1) | 0.0 | All 3 conditions (base, +RAG, +LoRA) resolve same 2 tasks |
+| 2, 10 | Partial Replay, Staleness | NOT RUN | — | No positive signal to build on |
 
-Most experiments use the 7B model first for fast iteration, then validate findings on 32B models. The 7B model runs fast enough for quick feedback loops; the 32B models are for confirming results at scale.
+### Additional experiments (not pre-registered)
 
-### Inference Stack
+| Experiment | FT | Key Finding |
+|-----------|-----|-------------|
+| Oracle SFT (gold patches, 7B) | -0.08 | Format mismatch: adapter outputs diffs, agent needs tool calls |
+| Correct-format LoRA (14B) | negative | Overfitting on 18 examples; hallucination on large files |
+| Trajectory collection (14B, 65 examples) | negative | Learned "finish quickly" pattern, not debugging |
+| Self-play 14B | stopped | 8% resolve rate, too few tasks for training |
+| Framework fixes (7B, 14B, 32B) | +12-19pp | Most impactful: 8% -> 20-27% resolve rate |
+| Edit tool + fuzzy matching | mixed | Fixes tool problem but reveals model problem |
 
-Models run locally via **Ollama** or **LM Studio**, which expose an OpenAI-compatible API. OpenClaw connects to this as a custom provider. No cloud inference needed for experimentation.
+### Converging conclusion
 
-### Training Stack
+No LoRA training strategy produced positive forward transfer. The bottleneck is training data: 12-31 unique resolved tasks is below the minimum viable scale for LoRA generalization (~100+ needed). Framework fixes (prompt engineering, tool design) are far more impactful than LoRA at current scales.
 
-- **7B LoRA training:** Feasible locally on M4 via MLX or Unsloth (minutes per run)
-- **32B QLoRA training:** Possible locally with MLX but tight on memory. Fall back to GCP spot L4/A100 if needed.
-- **Synthesis (data generation):** Run locally using the 32B model, or use Anthropic/OpenAI API for comparison
+See [LEARNINGS.md](../LEARNINGS.md) for comprehensive analysis.
 
-### Compute Budget
+---
 
-| Experiment | Local Est. | Cloud Fallback | API Costs |
-|------------|-----------|----------------|-----------|
-| 1. Full Replay | ~5 hrs | 20 GPU-hrs | $5 |
-| 2. Partial Replay | ~8 hrs | 30 GPU-hrs | $5 |
-| 3. MoLE | ~3 hrs | 9 GPU-hrs | $5 |
-| 4. EWC-LoRA | ~6 hrs | 22 GPU-hrs | $5 |
-| 5. Adaptive Rank | ~5 hrs | 18 GPU-hrs | $5 |
-| 6. Synthesis Format | ~2 hrs | 8 GPU-hrs | $15 |
-| 7. Synthesis Budget | ~1 hr | 5 GPU-hrs | $5 |
-| 8. Self-Synthesis | ~1 hr | 5 GPU-hrs | $20 |
-| 9. Skill+Knowledge Ablation | ~3 hrs | 10 GPU-hrs | $50 |
-| 10. Staleness | ~5 hrs | 20 GPU-hrs | $10 |
+## Models Used
 
-Local estimates are for 7B model experiments. 32B experiments will be slower locally or use cloud. API costs are for synthesis using Claude/GPT when comparing against local synthesis quality.
+Experiments ran on an M4 Mac Mini with 32GB unified memory.
+
+| Model | Role | Result |
+|-------|------|--------|
+| **Qwen 2.5 Coder 7B** (4-bit via Ollama) | Fast iteration, all Phase 1 experiments | 8% base, 20% with fixes |
+| **Qwen 2.5 Coder 14B** (4-bit via Ollama) | Scaling validation, framework fix experiments | 27% with fixes (optimal) |
+| **Qwen 2.5 Coder 32B** (4-bit via Ollama) | Scaling ceiling test | 27% with fixes (= 14B, 5x slower) |
+
+DeepSeek-R1-Distill and Command R were not used — experiments were conclusively negative before reaching Phase 3.
